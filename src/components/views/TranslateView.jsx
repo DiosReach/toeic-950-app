@@ -8,11 +8,21 @@ export default function TranslateView() {
   const { uid } = useProgressContext()
   const { items, save, remove } = useTranslations(uid)
 
+  const [direction, setDirection] = useState('en2zh') // 'en2zh' | 'zh2en'
   const [mode, setMode] = useState('sentence') // 'sentence' | 'word'
   const [input, setInput] = useState('')
-  const [result, setResult] = useState(null) // { mode, source, meaning, pos?, example?, rootHint? }
+  const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+
+  const isEn2Zh = direction === 'en2zh'
+  const sourceLang = isEn2Zh ? 'English' : '繁體中文'
+  const targetLang = isEn2Zh ? '繁體中文' : 'English'
+
+  const reset = () => {
+    setResult(null)
+    setError('')
+  }
 
   const handleTranslate = async () => {
     const text = input.trim()
@@ -27,11 +37,11 @@ export default function TranslateView() {
           setBusy(false)
           return
         }
-        const card = await lookupWord(text)
-        setResult({ mode: 'word', source: card.word, ...card })
+        const card = await lookupWord(text, direction)
+        setResult({ mode: 'word', source: text, ...card })
       } else {
-        const meaning = await translateSentence(text)
-        setResult({ mode: 'sentence', source: text, meaning })
+        const out = await translateSentence(text, direction)
+        setResult({ mode: 'sentence', ...out })
       }
     } catch {
       setError('Translation service is unavailable right now. Please try again.')
@@ -44,8 +54,10 @@ export default function TranslateView() {
     if (!result) return
     save({
       mode: result.mode,
+      direction,
       source: result.source,
       meaning: result.meaning,
+      audioText: result.audioText || null,
       pos: result.pos || null,
       example: result.example || null,
       rootHint: result.rootHint || null,
@@ -57,30 +69,54 @@ export default function TranslateView() {
       <div>
         <h1 className="text-2xl font-extrabold">智慧雙模翻譯中心</h1>
         <p className="text-sm text-slate-400">
-          Smart dual-mode translation · English → 繁體中文
+          Smart dual-mode translation · {sourceLang} → {targetLang}
         </p>
       </div>
 
-      {/* Mode toggle */}
-      <div className="inline-flex rounded-xl bg-slate-800/70 p-1 text-sm font-semibold">
-        {[
-          { key: 'word', label: '單字查詢 · Word' },
-          { key: 'sentence', label: '整句翻譯 · Sentence' },
-        ].map((m) => (
-          <button
-            key={m.key}
-            onClick={() => {
-              setMode(m.key)
-              setResult(null)
-              setError('')
-            }}
-            className={`rounded-lg px-4 py-2 transition ${
-              mode === m.key ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {m.label}
-          </button>
-        ))}
+      {/* Controls: direction + mode */}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Direction toggle */}
+        <div className="inline-flex items-center rounded-xl bg-slate-800/70 p-1 text-sm font-semibold">
+          {[
+            { key: 'en2zh', label: 'English ➔ 中文' },
+            { key: 'zh2en', label: '中文 ➔ English' },
+          ].map((d) => (
+            <button
+              key={d.key}
+              onClick={() => {
+                setDirection(d.key)
+                setInput('')
+                reset()
+              }}
+              className={`rounded-lg px-4 py-2 transition ${
+                direction === d.key ? 'bg-fuchsia-500 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {d.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Mode toggle */}
+        <div className="inline-flex rounded-xl bg-slate-800/70 p-1 text-sm font-semibold">
+          {[
+            { key: 'word', label: '單字查詢 · Word' },
+            { key: 'sentence', label: '整句翻譯 · Sentence' },
+          ].map((m) => (
+            <button
+              key={m.key}
+              onClick={() => {
+                setMode(m.key)
+                reset()
+              }}
+              className={`rounded-lg px-4 py-2 transition ${
+                mode === m.key ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Split layout */}
@@ -88,7 +124,7 @@ export default function TranslateView() {
         {/* Input */}
         <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
           <label className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-            English {mode === 'word' ? '(single word)' : '(paragraph or sentence)'}
+            {sourceLang} {mode === 'word' ? '(single word)' : '(paragraph or sentence)'}
           </label>
           <textarea
             value={input}
@@ -101,8 +137,12 @@ export default function TranslateView() {
             }}
             placeholder={
               mode === 'word'
-                ? 'e.g. negotiate'
-                : 'Paste a business paragraph to translate into Traditional Chinese…'
+                ? isEn2Zh
+                  ? 'e.g. negotiate'
+                  : '例如：談判'
+                : isEn2Zh
+                  ? 'Paste a business paragraph to translate into Traditional Chinese…'
+                  : '貼上中文段落，翻譯成英文…'
             }
             rows={mode === 'word' ? 3 : 8}
             className="scrollbar-slim flex-1 resize-none rounded-xl border border-slate-700 bg-slate-950/60 p-3 text-slate-100 placeholder-slate-600 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
@@ -119,8 +159,7 @@ export default function TranslateView() {
               <button
                 onClick={() => {
                   setInput('')
-                  setResult(null)
-                  setError('')
+                  reset()
                 }}
                 className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800"
               >
@@ -134,12 +173,13 @@ export default function TranslateView() {
         <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              繁體中文 Result
+              {targetLang} Result
             </span>
             {result && (
               <div className="flex items-center gap-1.5">
-                <AudioBtn label="US" onClick={() => speak(result.source, 'en-US')} />
-                <AudioBtn label="UK" onClick={() => speak(result.source, 'en-GB')} />
+                {/* 🔊 always reads the ENGLISH side, in either direction */}
+                <AudioBtn label="US" onClick={() => speak(result.audioText, 'en-US')} />
+                <AudioBtn label="UK" onClick={() => speak(result.audioText, 'en-GB')} />
                 <button
                   onClick={saveCurrent}
                   title="Save to history"
@@ -158,7 +198,7 @@ export default function TranslateView() {
               <p className="animate-pulse text-sm text-slate-500">Working…</p>
             ) : !result ? (
               <p className="text-sm text-slate-600">
-                Translation appears here. Use 🔊 to hear US / UK pronunciation.
+                Translation appears here. 🔊 always reads the English text aloud.
               </p>
             ) : result.mode === 'word' ? (
               <WordResult result={result} />
@@ -191,8 +231,8 @@ export default function TranslateView() {
                       {it.mode}
                     </span>
                     <span className="truncate font-semibold text-white">{it.source}</span>
-                    <AudioBtn label="US" onClick={() => speak(it.source, 'en-US')} small />
-                    <AudioBtn label="UK" onClick={() => speak(it.source, 'en-GB')} small />
+                    <AudioBtn label="US" onClick={() => speak(it.audioText || it.source, 'en-US')} small />
+                    <AudioBtn label="UK" onClick={() => speak(it.audioText || it.source, 'en-GB')} small />
                   </div>
                   <p className="mt-1 truncate text-sm text-slate-300">{it.meaning}</p>
                 </div>
@@ -216,7 +256,7 @@ function WordResult({ result }) {
   return (
     <div className="space-y-3">
       <div className="flex items-baseline gap-2">
-        <h3 className="text-2xl font-extrabold text-white">{result.source}</h3>
+        <h3 className="text-2xl font-extrabold text-white">{result.word}</h3>
         {result.pos && (
           <span className="rounded-md bg-slate-800 px-1.5 py-0.5 text-[11px] font-medium uppercase text-slate-400">
             {result.pos}
