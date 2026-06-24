@@ -1,5 +1,8 @@
+import AudioPhonetics from './AudioPhonetics'
+
 // Presentational card for a single vocabulary word.
-// All state lives in the parent; this only renders + emits events.
+// Now shows dual phonetics (KK/DJ) + US/UK audio. All state lives in the
+// parent; this only renders + emits events.
 export default function WordCard({ word, status, starred, onSetStatus, onToggleStar }) {
   const isMastered = status === 'mastered'
   const isReviewing = status === 'reviewing'
@@ -24,8 +27,19 @@ export default function WordCard({ word, status, starred, onSetStatus, onToggleS
         </span>
       </div>
 
-      <p className="mt-2 text-sm leading-relaxed text-slate-300">{word.definition}</p>
+      {/* Dual phonetics + dual audio */}
+      <div className="mt-2">
+        <AudioPhonetics word={word} />
+      </div>
+
+      <p className="mt-3 text-sm leading-relaxed text-slate-300">{word.definition}</p>
       <p className="mt-2 text-sm italic text-slate-500">“{word.example}”</p>
+
+      {word.note && (
+        <p className="mt-2 rounded-lg bg-slate-800/60 px-3 py-1.5 text-xs text-indigo-300">
+          🧬 {word.note}
+        </p>
+      )}
 
       {/* Status controls */}
       <div className="mt-4 flex gap-2">

@@ -1,6 +1,7 @@
 import { useAuth } from './context/AuthContext'
+import { ProgressProvider } from './context/ProgressContext'
 import AuthPage from './components/AuthPage'
-import Dashboard from './components/Dashboard'
+import AppShell from './components/AppShell'
 
 export default function App() {
   const { user, loading } = useAuth()
@@ -16,5 +17,13 @@ export default function App() {
   }
 
   // The gateway: no authenticated user → no words, only the auth screen.
-  return user ? <Dashboard /> : <AuthPage />
+  // When signed in, ProgressProvider loads this user's Firestore data once
+  // and shares it across all tabs.
+  return user ? (
+    <ProgressProvider uid={user.uid}>
+      <AppShell />
+    </ProgressProvider>
+  ) : (
+    <AuthPage />
+  )
 }
