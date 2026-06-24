@@ -7,7 +7,28 @@ import {
   signOut,
   updateProfile,
 } from 'firebase/auth'
-import { auth } from '../firebase'
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
+import { auth, db } from '../firebase'
+
+// Ensure a users/{uid} profile doc exists with a createdAt baseline.
+// New accounts get createdAt = now; pre-existing accounts that never had the
+// field fall back to the current timestamp on first load. This date is the
+// anchor for the "Registration Day = Day 1" calendar.
+async function ensureUserProfile(user, extra = {}) {
+  const ref = doc(db, 'users', user.uid)
+  const snap = await getDoc(ref)
+  if (!snap.exists() || !snap.data()?.createdAt) {
+    await setDoc(
+      ref,
+      {
+        email: user.email,
+        displayName: user.displayName || extra.displayName || null,
+        createdAt: serverTimestamp(),
+      },
+      { merge: true },
+    )
+  }
+}
 
 const AuthContext = createContext(null)
 
@@ -41,9 +62,16 @@ export function AuthProvider({ children }) {
           // Reflect the new display name locally without waiting for a reload.
           setUser({ ...cred.user })
         }
+        // Save the registration baseline (Day 1 anchor) to Firestore.
+        await ensureUserProfile(cred.user, { displayName })
         return cred.user
       },
-      signIn: (email, password) => signInWithEmailAndPassword(auth, email, password),
+      signIn: async (email, password) => {
+        const cred = await signInWithEmailAndPassword(auth, email, password)
+        // Backfill createdAt for accounts made before this feature existed.
+        await ensureUserProfile(cred.user)
+        return cred.user
+      },
       resetPassword: (email) => sendPasswordResetEmail(auth, email),
       logout: () => signOut(auth),
     }),

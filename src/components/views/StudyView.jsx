@@ -1,12 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useProgressContext } from '../../context/ProgressContext'
+import { useGeneratedDay } from '../../hooks/useGeneratedDay'
 import { WORDS } from '../../data/words'
 import { ALL_WORDS_BY_ID } from '../../data/catalog'
 import { ROOTS } from '../../data/roots'
-import { getTodayWords } from '../../lib/daily'
 import WordCard from '../WordCard'
 
-// Words that belong to roots the user has unlocked — these join the study pool.
 function unlockedRootWords(unlockedRoots) {
   return ROOTS.filter((r) => unlockedRoots.includes(r.id)).flatMap((r) =>
     r.words.map((w) => ({ ...w, rootId: r.id })),
@@ -14,11 +13,14 @@ function unlockedRootWords(unlockedRoots) {
 }
 
 export default function StudyView() {
-  const { progress, setStatus, toggleStar, dailyGoal, studiedTodayCount } =
+  const { progress, setStatus, toggleStar, dailyGoal, studiedTodayCount, uid, relativeDay } =
     useProgressContext()
   const [tab, setTab] = useState('today')
 
-  const dailyWords = useMemo(() => getTodayWords(), [])
+  // The "Today" list is this user's generated allocation for their relative day.
+  const { day: today, loading: dayLoading } = useGeneratedDay(uid, relativeDay)
+  const dailyWords = today?.words || []
+
   const rootWords = useMemo(
     () => unlockedRootWords(progress.unlockedRoots),
     [progress.unlockedRoots],
@@ -32,7 +34,7 @@ export default function StudyView() {
         : 'none'
 
   const tabs = [
-    { key: 'today', label: 'Today', count: dailyWords.length },
+    { key: 'today', label: `Today · Day ${relativeDay ?? '–'}`, count: dailyWords.length },
     { key: 'all', label: 'All words', count: WORDS.length + rootWords.length },
     { key: 'mastered', label: 'Mastered', count: progress.mastered.length },
     { key: 'reviewing', label: 'Reviewing', count: progress.reviewing.length },
@@ -61,16 +63,31 @@ export default function StudyView() {
 
   return (
     <div>
-      {/* Daily goal banner */}
+      {/* Daily goal + tier banner */}
       <section className="mb-6 rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-bold">
+            <div className="flex items-center gap-2">
+              <span className="rounded-lg bg-indigo-500/15 px-2 py-0.5 text-xs font-bold text-indigo-300">
+                Day {relativeDay ?? '–'}
+              </span>
+              {today && (
+                <span className="rounded-lg bg-fuchsia-500/15 px-2 py-0.5 text-xs font-bold text-fuchsia-300">
+                  Tier {today.tier} · Target {today.target}
+                </span>
+              )}
+            </div>
+            <h2 className="mt-2 text-lg font-bold">
               {goalMet ? '🎉 Daily goal complete!' : 'Today’s goal'}
             </h2>
             <p className="text-sm text-slate-400">
               {studiedTodayCount} / {dailyGoal} words studied today
             </p>
+            {today?.topic && (
+              <p className="mt-1 text-xs text-slate-500">
+                🧬 {today.topic.title} — {today.topic.hint}
+              </p>
+            )}
           </div>
           <div className="text-right">
             <p className="text-2xl font-extrabold text-white">{progress.mastered.length}</p>
@@ -104,7 +121,11 @@ export default function StudyView() {
       </div>
 
       {/* Word grid */}
-      {visibleWords.length === 0 ? (
+      {tab === 'today' && dayLoading ? (
+        <div className="py-16 text-center text-slate-500 animate-pulse">
+          Generating today’s words…
+        </div>
+      ) : visibleWords.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-800 py-16 text-center text-slate-500">
           Nothing here yet. Start marking words to fill this list.
         </div>

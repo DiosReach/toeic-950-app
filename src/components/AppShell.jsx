@@ -4,12 +4,14 @@ import { useProgressContext } from '../context/ProgressContext'
 import StudyView from './views/StudyView'
 import EtymologyView from './views/EtymologyView'
 import CalendarView from './views/CalendarView'
+import TranslateView from './views/TranslateView'
 import ExamCenter from './exam/ExamCenter'
 
 const NAV = [
   { key: 'study', label: 'Study', icon: '📚' },
   { key: 'etymology', label: 'Etymology', icon: '🧬' },
   { key: 'calendar', label: 'Calendar', icon: '🗓️' },
+  { key: 'translate', label: 'Translate', icon: '🌐' },
   { key: 'exam', label: 'Exam Center', icon: '🎓' },
 ]
 
@@ -88,6 +90,7 @@ export default function AppShell() {
         {view === 'study' && <StudyView />}
         {view === 'etymology' && <EtymologyView />}
         {view === 'calendar' && <CalendarView />}
+        {view === 'translate' && <TranslateView />}
         {view === 'exam' && <ExamCenter />}
       </main>
     </div>

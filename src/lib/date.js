@@ -27,6 +27,10 @@ export const yesterdayKey = () => toKey(addDays(new Date(), -1))
 export const dayIndexForDate = (date) =>
   Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000)
 
+// Whole-day difference between two date keys (bKey - aKey).
+export const daysBetween = (aKey, bKey) =>
+  Math.round((fromKey(bKey).getTime() - fromKey(aKey).getTime()) / 86_400_000)
+
 // Inclusive list of date keys between two keys.
 export const keysInRange = (startKey, endKey) => {
   let cur = fromKey(startKey)
