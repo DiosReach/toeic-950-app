@@ -7,7 +7,18 @@ import QuizReviewModal from './QuizReviewModal'
 // Runs a generated quiz: one question at a time, then a result screen with
 // an inline review. On finish it builds the result object and hands it to
 // `onFinish` (which persists it to Firestore via the progress hook).
-export default function QuizRunner({ title, type, meta, questions, onFinish, onExit }) {
+export default function QuizRunner({
+  title,
+  type,
+  meta,
+  questions,
+  onFinish,
+  onExit,
+  // Optional "gated" mode (used by the daily Lock-Unlock quiz):
+  passThreshold = null, // e.g. 0.8 — when set, show a pass/fail banner
+  onRetry = null, // shown on failure to re-attempt with fresh questions
+  exitLabel = 'Back to Exam Center',
+}) {
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState(() => Array(questions.length).fill(null))
   const [result, setResult] = useState(null) // set once on submit
@@ -44,6 +55,8 @@ export default function QuizRunner({ title, type, meta, questions, onFinish, onE
   // ── Result screen ──────────────────────────────────────────
   if (result) {
     const pct = Math.round((result.score / result.total) * 100)
+    const gated = passThreshold != null
+    const passed = gated && result.score / result.total >= passThreshold
     return (
       <div className="mx-auto max-w-xl rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center">
         <p className="text-sm font-semibold uppercase tracking-wider text-indigo-400">
@@ -54,18 +67,41 @@ export default function QuizRunner({ title, type, meta, questions, onFinish, onE
           <span className="text-2xl text-slate-500"> / {result.total}</span>
         </div>
         <p className="text-slate-400">{pct}% correct</p>
-        <div className="mt-6 flex justify-center gap-3">
+
+        {gated && (
+          <div
+            className={`mx-auto mt-5 max-w-md rounded-xl px-4 py-3 text-sm font-semibold ${
+              passed
+                ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40'
+                : 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/40'
+            }`}
+          >
+            {passed
+              ? '🎉 Passed! The next day’s root theme is now unlocked.'
+              : `Almost there — you need ${Math.ceil(passThreshold * result.total)}/${result.total} to pass. Review your root breakdowns and try again!`}
+          </div>
+        )}
+
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
           <button
             onClick={() => setReviewing(true)}
             className="rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2.5 text-sm font-semibold text-white hover:from-indigo-400 hover:to-fuchsia-400"
           >
             🔍 Review answers
           </button>
+          {gated && !passed && onRetry && (
+            <button
+              onClick={onRetry}
+              className="rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-amber-400"
+            >
+              🔁 Try again
+            </button>
+          )}
           <button
             onClick={onExit}
             className="rounded-xl border border-slate-700 px-5 py-2.5 text-sm font-medium text-slate-300 hover:bg-slate-800"
           >
-            Back to Exam Center
+            {gated && passed ? '➡️ Continue' : exitLabel}
           </button>
         </div>
 

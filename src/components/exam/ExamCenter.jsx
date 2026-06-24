@@ -25,7 +25,10 @@ const relDayRange = (a, b) => {
 }
 
 export default function ExamCenter() {
-  const { progress, addQuizResult, relativeDay, registrationKey } = useProgressContext()
+  // Use the quiz-gated unlockedDay as the "current day" so reviews only cover
+  // days the user has actually unlocked.
+  const { progress, addQuizResult, unlockedDay: relativeDay, registrationKey } =
+    useProgressContext()
   const [active, setActive] = useState(null)
   const [reviewQuiz, setReviewQuiz] = useState(null)
 

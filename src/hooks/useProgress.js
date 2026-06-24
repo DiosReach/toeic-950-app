@@ -25,6 +25,7 @@ const DEFAULT_PROGRESS = {
   history: {}, // { 'YYYY-MM-DD': { studied: [ids], goalMet: bool, goal } }
   quizzes: [], // saved quiz/exam results (newest first)
   unlockedRoots: [], // rootIds the user has "generated"/unlocked
+  unlockedDay: 1, // highest study day unlocked (advances by passing the daily quiz)
 }
 
 const addUnique = (arr, id) => (arr.includes(id) ? arr : [...arr, id])
@@ -189,6 +190,20 @@ export function useProgress(uid) {
     [persist],
   )
 
+  /**
+   * Advance the study day. Called when the daily Lock-Unlock quiz is passed
+   * (and by the Dev skip button). Persists the new highest unlocked day.
+   * @param {number} [to] optional explicit day; defaults to current + 1
+   */
+  const unlockNextDay = useCallback(
+    (to) => {
+      const current = stateRef.current.unlockedDay || 1
+      const next = Math.max(current + 1, to || 0)
+      return persist({ unlockedDay: next })
+    },
+    [persist],
+  )
+
   return {
     progress,
     loading,
@@ -197,6 +212,8 @@ export function useProgress(uid) {
     toggleStar,
     unlockRoot,
     addQuizResult,
+    unlockNextDay,
+    unlockedDay: progress.unlockedDay || 1,
     setActiveDayGoal,
     dailyGoal: activeDayGoal,
     studiedTodayCount: progress.dailyDate === todayKey() ? progress.studiedToday.length : 0,
