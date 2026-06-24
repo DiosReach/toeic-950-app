@@ -1,0 +1,14 @@
+# Netlify deploy config for this Vite + React SPA.
+# Build locally bakes VITE_* env vars into dist; on Netlify, set the six
+# VITE_FIREBASE_* values under Site settings → Environment variables.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Single-page-app fallback: every route serves index.html so client-side
+# navigation and hard refreshes (e.g. /translate) don't 404.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
