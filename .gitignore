@@ -18,6 +18,12 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# shared screenshots / scratch images (not part of the app)
+*.png
+*.jpg
+*.jpeg
+!public/**
+
 # editor / OS
 .DS_Store
 .vscode/*
