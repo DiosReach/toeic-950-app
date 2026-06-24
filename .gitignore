@@ -8,6 +8,10 @@ dist-ssr
 .env.local
 .env.*.local
 
+# firebase
+.firebase
+firebase-debug.log*
+
 # logs
 npm-debug.log*
 yarn-debug.log*
