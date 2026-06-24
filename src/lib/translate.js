@@ -1,30 +1,30 @@
 // ─────────────────────────────────────────────────────────────
-// Triple-version translation engine.
+// Two-register translation engine (keyless).
 //
-// For any input (word or sentence) we surface THREE register variants:
-//   🇺🇸 us     — Modern US workplace & casual
-//   🇬🇧 uk     — Modern UK workplace & casual
-//   💼 formal  — Elite business / TOEIC formal
+// For any input we surface TWO renderings of the translated result:
+//   💬 casual  — natural, conversational Traditional Chinese (or casual EN)
+//   💼 formal  — polished business / TOEIC-grade Traditional Chinese (or EN)
 //
-// Strategy (no LLM required at runtime):
-//   1. A curated PHRASEBOOK gives authentic 3-version output for common
-//      high-frequency workplace terms (instant, zero network).
-//   2. Anything else falls back to a register TEMPLATE engine that styles
-//      the base translation (from MyMemory) into the three registers.
+// Strategy (no LLM at runtime):
+//   1. A curated PHRASEBOOK gives authentic casual/formal output for common
+//      workplace terms (instant, zero network).
+//   2. Otherwise we fetch the base translation from MyMemory (auto-chunked to
+//      bypass the 500-char limit) and style it into the two registers.
 //
-// `generateVariants()` is the single seam to later swap in Claude (e.g. via
-// a Netlify Function) for fully dynamic slang — keep its return shape stable.
+// Each version exposes `result` (the translated text — the MAIN large font in
+// the UI) and `source` (the original input — the small reference line).
+// `generateVariants()` keeps a stable shape so an LLM can later replace step 2.
 // ─────────────────────────────────────────────────────────────
 
 const MYMEMORY = 'https://api.mymemory.translated.net/get'
 const LANGPAIR = { en2zh: 'en|zh-TW', zh2en: 'zh-TW|en' }
+const MAX_CHUNK = 400 // stay safely under MyMemory's free 500-char limit
 
 export const VERSION_META = {
-  us: { flag: '🇺🇸', label: '美國現代口語版', sub: 'Modern US · Workplace & Casual', accent: 'en-US' },
-  uk: { flag: '🇬🇧', label: '英國現代口語版', sub: 'Modern UK · Workplace & Casual', accent: 'en-GB' },
-  formal: { flag: '💼', label: '國際商務正式版', sub: 'Elite Business · TOEIC Formal', accent: 'en-GB' },
+  casual: { icon: '💬', label: '口語化表達', sub: 'Modern Casual Expression' },
+  formal: { icon: '💼', label: '商業正式翻譯', sub: 'Elite Business & TOEIC Formal' },
 }
-const ORDER = ['us', 'uk', 'formal']
+const ORDER = ['casual', 'formal']
 
 // ── Curated phrasebook: authentic, contemporary 3-version renderings ──
 const PHRASEBOOK = {
@@ -320,17 +320,8 @@ const PHRASEBOOK = {
   },
 }
 
-// ── Lightweight register transforms for the template fallback ──
-const britishize = (s) =>
-  s
-    .replace(/(\w)ize\b/g, '$1ise')
-    .replace(/(\w)izing\b/g, '$1ising')
-    .replace(/(\w)ization\b/g, '$1isation')
-    .replace(/\bcolor\b/gi, 'colour')
-    .replace(/\bcanceled\b/gi, 'cancelled')
-    .replace(/\bschedule\b/gi, 'diary')
-
-const casualize = (s) =>
+// ── English register transforms (used when the target is English) ──
+const casualizeEn = (s) =>
   s
     .replace(/\bcannot\b/gi, 'can’t')
     .replace(/\bdo not\b/gi, 'don’t')
@@ -339,8 +330,9 @@ const casualize = (s) =>
     .replace(/\byou are\b/gi, 'you’re')
     .replace(/\bit is\b/gi, 'it’s')
     .replace(/\bwe are\b/gi, 'we’re')
+    .replace(/\bgentlemen\b/gi, 'folks')
 
-const formalize = (s) =>
+const formalizeEn = (s) =>
   s
     .replace(/\bcan’t\b/gi, 'cannot')
     .replace(/\bdon’t\b/gi, 'do not')
@@ -349,6 +341,26 @@ const formalize = (s) =>
     .replace(/\bASAP\b/gi, 'at your earliest convenience')
     .replace(/\bget\b/gi, 'obtain')
     .replace(/\bok\b/gi, 'acceptable')
+    .replace(/\bhi\b/gi, 'Dear Sir or Madam')
+
+// ── Traditional Chinese register transforms (target is Chinese) ──
+// Heuristic, keyless styling so the casual vs formal outputs differ usefully.
+const ZH_FORMAL = [
+  [/你們/g, '各位'], [/你/g, '您'], [/不能/g, '無法'], [/不會/g, '不會'],
+  [/因為/g, '由於'], [/所以/g, '因此'], [/而且/g, '並且'], [/但是/g, '惟'],
+  [/馬上/g, '立即'], [/趕快/g, '盡速'], [/這個/g, '該'], [/這些/g, '該等'],
+  [/這/g, '此'], [/會議/g, '會議'], [/幫/g, '協助'], [/給/g, '提供'],
+  [/已經/g, '業已'], [/想要/g, '擬'], [/謝謝/g, '謹致謝忱'], [/請/g, '敬請'],
+]
+const ZH_CASUAL = [
+  [/各位/g, '大家'], [/您/g, '你'], [/無法/g, '不能'], [/由於/g, '因為'],
+  [/因此/g, '所以'], [/並且/g, '而且'], [/立即/g, '馬上'], [/盡速/g, '趕快'],
+  [/該等/g, '這些'], [/該/g, '這個'], [/此/g, '這'], [/業已/g, '已經'],
+  [/協助/g, '幫'], [/敬請/g, '請'], [/謹致謝忱/g, '謝啦'], [/之/g, '的'],
+]
+const applyMap = (s, map) => map.reduce((acc, [re, to]) => acc.replace(re, to), s)
+const formalizeZh = (s) => applyMap(s, ZH_FORMAL)
+const casualizeZh = (s) => applyMap(s, ZH_CASUAL)
 
 export const looksLikeWord = (text) => text.trim().split(/\s+/).length === 1
 
@@ -362,66 +374,94 @@ async function mmTranslate(text, langpair) {
   return out
 }
 
+// Split long text into <MAX_CHUNK pieces on sentence boundaries (handles both
+// Latin .!? and CJK 。！？；plus newlines). Long single sentences are hard-wrapped.
+export function splitIntoChunks(text, max = MAX_CHUNK) {
+  const clean = text.trim()
+  if (clean.length <= max) return [clean]
+  const sentences = clean.match(/[^.!?。！？；\n]+[.!?。！？；\n]*/g) || [clean]
+  const chunks = []
+  let cur = ''
+  for (const s of sentences) {
+    if (cur && (cur + s).length > max) {
+      chunks.push(cur)
+      cur = ''
+    }
+    if (s.length > max) {
+      let rest = s
+      while (rest.length > max) {
+        let cut = rest.lastIndexOf(' ', max)
+        if (cut <= 0) cut = max
+        chunks.push((cur + rest.slice(0, cut)).trim())
+        cur = ''
+        rest = rest.slice(cut)
+      }
+      cur = rest
+    } else {
+      cur += s
+    }
+  }
+  if (cur.trim()) chunks.push(cur.trim())
+  return chunks.map((c) => c.trim()).filter(Boolean)
+}
+
+// Translate any length of text by chunking + merging (bypasses the 500 cap).
+async function translateLong(text, langpair) {
+  const chunks = splitIntoChunks(text)
+  if (chunks.length === 1) return mmTranslate(chunks[0], langpair)
+  const parts = await Promise.all(chunks.map((c) => mmTranslate(c, langpair)))
+  // English target needs spaces between sentences; Chinese keeps its own marks.
+  const sep = langpair.split('|')[1].startsWith('en') ? ' ' : ''
+  return parts.join(sep).replace(/\s{2,}/g, ' ').trim()
+}
+
 const phrasebookKey = (s) =>
   s.trim().toLowerCase().replace(/[.!?,;:'"]/g, '').replace(/\s+/g, ' ')
 
-const toVersion = (key, en, zh) => ({
-  key,
-  ...VERSION_META[key],
-  en,
-  zh,
-  audioText: en, // 🔊 reads this version's English
-})
-
 /**
- * Produce the three register versions for the given text + direction.
+ * Produce the casual + formal renderings for the given text + direction.
  * @returns {{source, direction, isCurated, versions: object[]}}
+ *   each version: { key, icon, label, sub, result, source, audioText }
  */
 export async function generateVariants(rawText, direction = 'en2zh') {
   const text = rawText.trim()
+  const isEn2Zh = direction === 'en2zh'
 
-  // Resolve the English form (the thing we render registers of) + a base zh.
-  let coreEn
-  let baseZh
-  if (direction === 'zh2en') {
-    coreEn = await mmTranslate(text, LANGPAIR.zh2en)
-    baseZh = text
-  } else {
-    coreEn = text
-    baseZh = null // lazily fetched only if not curated
-  }
+  // Base translation of the whole text (auto-chunked for long input).
+  const base = await translateLong(text, isEn2Zh ? LANGPAIR.en2zh : LANGPAIR.zh2en)
 
-  // 1) Curated phrasebook — authentic, instant.
-  const entry = PHRASEBOOK[phrasebookKey(coreEn)] || PHRASEBOOK[phrasebookKey(text)]
+  // Curated phrasebook is keyed by the English form.
+  const englishKey = isEn2Zh ? text : base
+  const entry = PHRASEBOOK[phrasebookKey(englishKey)]
+
+  let casualText
+  let formalText
+  let isCurated = false
   if (entry) {
-    return {
-      source: text,
-      direction,
-      isCurated: true,
-      versions: ORDER.map((k) => toVersion(k, entry[k].en, entry[k].zh)),
-    }
+    isCurated = true
+    casualText = isEn2Zh ? entry.us.zh : entry.us.en
+    formalText = isEn2Zh ? entry.formal.zh : entry.formal.en
+  } else if (isEn2Zh) {
+    casualText = casualizeZh(base)
+    formalText = formalizeZh(base)
+  } else {
+    casualText = casualizeEn(base)
+    formalText = formalizeEn(base)
   }
 
-  // 2) Template fallback — style the base translation into 3 registers.
-  if (baseZh == null) {
-    try {
-      baseZh = await mmTranslate(text, LANGPAIR.en2zh)
-    } catch {
-      baseZh = '（查無翻譯）'
-    }
-  }
-  const usEn = casualize(coreEn)
-  const ukEn = britishize(casualize(coreEn))
-  const formalEn = formalize(coreEn)
+  const build = (key, result) => ({
+    key,
+    ...VERSION_META[key],
+    result, // translated text — MAIN large font
+    source: text, // original input — small reference line
+    // 🔊 reads the English side: the input (en2zh) or this result (zh2en).
+    audioText: isEn2Zh ? text : result,
+  })
 
   return {
     source: text,
     direction,
-    isCurated: false,
-    versions: [
-      toVersion('us', usEn, baseZh),
-      toVersion('uk', ukEn, baseZh),
-      toVersion('formal', formalEn, baseZh),
-    ],
+    isCurated,
+    versions: [build('casual', casualText), build('formal', formalText)],
   }
 }

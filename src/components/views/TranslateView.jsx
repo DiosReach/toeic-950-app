@@ -17,6 +17,7 @@ export default function TranslateView() {
 
   const isEn2Zh = direction === 'en2zh'
   const sourceLang = isEn2Zh ? 'English' : '繁體中文'
+  const targetLang = isEn2Zh ? '繁體中文' : 'English'
 
   const reset = () => {
     setResult(null)
@@ -46,10 +47,7 @@ export default function TranslateView() {
       direction,
       source: result.source,
       isCurated: result.isCurated,
-      // Persist all three versions so history shows the full set.
-      versions: result.versions.map((v) => ({ key: v.key, en: v.en, zh: v.zh })),
-      // a flat meaning for compact history rows
-      meaning: result.versions.map((v) => v.en).join(' · '),
+      versions: result.versions.map((v) => ({ key: v.key, result: v.result })),
     })
   }
 
@@ -58,7 +56,7 @@ export default function TranslateView() {
       <div>
         <h1 className="text-2xl font-extrabold">智慧雙模翻譯中心</h1>
         <p className="text-sm text-slate-400">
-          Triple-version localized translation · 美式口語 / 英式口語 / 商務正式
+          Two-register translation · 💬 口語化表達 / 💼 商業正式翻譯
         </p>
       </div>
 
@@ -128,59 +126,51 @@ export default function TranslateView() {
                   ? 'e.g. schedule'
                   : '例如：開會'
                 : isEn2Zh
-                  ? 'Type something to render in US / UK / formal styles…'
-                  : '輸入中文，轉成美式 / 英式 / 商務英文…'
+                  ? 'Paste any length of English — long paragraphs are auto-chunked…'
+                  : '貼上任意長度的中文段落，自動分段翻譯…'
             }
-            rows={mode === 'word' ? 3 : 7}
+            rows={mode === 'word' ? 3 : 8}
             className="scrollbar-slim flex-1 resize-none rounded-xl border border-slate-700 bg-slate-950/60 p-3 text-slate-100 placeholder-slate-600 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
           />
-          <div className="mt-3 flex items-center gap-2">
-            <button
-              onClick={handleTranslate}
-              disabled={busy || !input.trim()}
-              className="rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:from-indigo-400 hover:to-fuchsia-400 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {busy ? 'Translating…' : 'Translate'}
-            </button>
-            {input && (
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-[11px] text-slate-600">{input.length} chars</span>
+            <div className="flex items-center gap-2">
+              {input && (
+                <button
+                  onClick={() => {
+                    setInput('')
+                    reset()
+                  }}
+                  className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800"
+                >
+                  Clear
+                </button>
+              )}
               <button
-                onClick={() => {
-                  setInput('')
-                  reset()
-                }}
-                className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800"
+                onClick={handleTranslate}
+                disabled={busy || !input.trim()}
+                className="rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:from-indigo-400 hover:to-fuchsia-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Clear
+                {busy ? 'Translating…' : 'Translate'}
               </button>
-            )}
+            </div>
           </div>
         </div>
 
-        {/* Output: triple-version cards */}
+        {/* Output: two register cards */}
         <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
           <div className="mb-3 flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              三版本並列輸出
+              {targetLang} · 兩種版本
             </span>
             {result && (
-              <div className="flex items-center gap-2">
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                    result.isCurated
-                      ? 'bg-emerald-500/15 text-emerald-300'
-                      : 'bg-slate-700 text-slate-300'
-                  }`}
-                >
-                  {result.isCurated ? '✦ curated' : 'auto'}
-                </span>
-                <button
-                  onClick={saveCurrent}
-                  title="Save to history"
-                  className="rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold text-amber-300 hover:bg-slate-700"
-                >
-                  ★ Save
-                </button>
-              </div>
+              <button
+                onClick={saveCurrent}
+                title="Save to history"
+                className="rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold text-amber-300 hover:bg-slate-700"
+              >
+                ★ Save
+              </button>
             )}
           </div>
 
@@ -188,12 +178,12 @@ export default function TranslateView() {
             <p className="rounded-xl bg-rose-500/10 p-4 text-sm text-rose-400">{error}</p>
           ) : busy ? (
             <p className="animate-pulse rounded-xl bg-slate-950/40 p-4 text-sm text-slate-500">
-              Working…
+              Translating…
             </p>
           ) : !result ? (
             <p className="rounded-xl bg-slate-950/40 p-4 text-sm text-slate-600">
-              Three versions appear here — 🇺🇸 US casual, 🇬🇧 UK casual, and 💼 formal —
-              each with its own 🔊 in the right accent.
+              Two versions appear here — 💬 casual and 💼 formal — with the
+              translation shown large and your original text beneath as reference.
             </p>
           ) : (
             <div className="space-y-3">
@@ -220,18 +210,18 @@ export default function TranslateView() {
                 className="flex items-start justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-3"
               >
                 <div className="min-w-0">
-                  <p className="truncate font-semibold text-white">{it.source}</p>
                   {Array.isArray(it.versions) ? (
-                    <div className="mt-1 space-y-0.5">
+                    <div className="space-y-0.5">
                       {it.versions.map((v) => (
-                        <p key={v.key} className="truncate text-xs text-slate-400">
-                          {VERSION_FLAG[v.key]} {v.en}
+                        <p key={v.key} className="truncate text-sm font-semibold text-white">
+                          {VERSION_ICON[v.key]} {v.result}
                         </p>
                       ))}
                     </div>
                   ) : (
-                    <p className="mt-1 truncate text-sm text-slate-300">{it.meaning}</p>
+                    <p className="truncate text-sm font-semibold text-white">{it.meaning}</p>
                   )}
+                  <p className="mt-1 truncate text-xs text-slate-500">{it.source}</p>
                 </div>
                 <button
                   onClick={() => remove(it.id)}
@@ -249,36 +239,29 @@ export default function TranslateView() {
   )
 }
 
-const VERSION_FLAG = { us: '🇺🇸', uk: '🇬🇧', formal: '💼' }
+const VERSION_ICON = { casual: '💬', formal: '💼' }
 
 function VersionCard({ v }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-      <div className="mb-1.5 flex items-center justify-between">
+      <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-lg">{v.flag}</span>
+          <span className="text-lg">{v.icon}</span>
           <div className="leading-tight">
             <p className="text-sm font-bold text-white">{v.label}</p>
             <p className="text-[10px] uppercase tracking-wide text-slate-500">{v.sub}</p>
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {/* Smart audio: play THIS version's English in its native accent. */}
-          {v.key === 'formal' ? (
-            <>
-              <AudioBtn label="US" onClick={() => speak(v.audioText, 'en-US')} />
-              <AudioBtn label="UK" onClick={() => speak(v.audioText, 'en-GB')} />
-            </>
-          ) : (
-            <AudioBtn
-              label={v.key === 'us' ? 'US' : 'UK'}
-              onClick={() => speak(v.audioText, v.accent)}
-            />
-          )}
+          <AudioBtn label="US" onClick={() => speak(v.audioText, 'en-US')} />
+          <AudioBtn label="UK" onClick={() => speak(v.audioText, 'en-GB')} />
         </div>
       </div>
-      <p className="text-lg font-semibold leading-snug text-white">{v.en}</p>
-      <p className="mt-1 text-sm text-slate-400">{v.zh}</p>
+
+      {/* MAIN: the translated result — large + bold + highly readable */}
+      <p className="text-2xl font-bold leading-snug text-white">{v.result}</p>
+      {/* Reference: the original input — small + muted */}
+      <p className="mt-1.5 text-xs text-slate-500">{v.source}</p>
     </div>
   )
 }
