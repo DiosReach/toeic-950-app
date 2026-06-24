@@ -44,6 +44,15 @@ export function useProgress(uid) {
   const [error, setError] = useState(null)
   // Holds the freshest state so async mutators never act on stale closures.
   const stateRef = useRef(DEFAULT_PROGRESS)
+  // The active day's goal = the size of that day's root family. The view that
+  // knows the current day (StudyView) sets this; the streak/goal logic reads it.
+  const [activeDayGoal, setActiveDayGoalState] = useState(DAILY_GOAL)
+  const dayGoalRef = useRef(DAILY_GOAL)
+  const setActiveDayGoal = useCallback((n) => {
+    if (!n || n === dayGoalRef.current) return
+    dayGoalRef.current = n
+    setActiveDayGoalState(n)
+  }, [])
 
   const apply = useCallback((next) => {
     stateRef.current = next
@@ -103,10 +112,11 @@ export function useProgress(uid) {
   // Count a word toward today's goal, roll the streak, and log to history.
   const registerDailyActivity = (state, wordId) => {
     const today = todayKey()
+    const dayGoal = dayGoalRef.current
     const sameDay = state.dailyDate === today
     const studiedToday = sameDay ? addUnique(state.studiedToday, wordId) : [wordId]
 
-    const goalMet = studiedToday.length >= DAILY_GOAL
+    const goalMet = studiedToday.length >= dayGoal
     const changes = {
       dailyDate: today,
       studiedToday,
@@ -114,7 +124,7 @@ export function useProgress(uid) {
       // locally so other dates aren't lost on the optimistic update).
       history: {
         ...state.history,
-        [today]: { studied: studiedToday, goalMet, goal: DAILY_GOAL },
+        [today]: { studied: studiedToday, goalMet, goal: dayGoal },
       },
     }
 
@@ -187,7 +197,8 @@ export function useProgress(uid) {
     toggleStar,
     unlockRoot,
     addQuizResult,
-    dailyGoal: DAILY_GOAL,
+    setActiveDayGoal,
+    dailyGoal: activeDayGoal,
     studiedTodayCount: progress.dailyDate === todayKey() ? progress.studiedToday.length : 0,
   }
 }

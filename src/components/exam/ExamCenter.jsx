@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useProgressContext } from '../../context/ProgressContext'
 import { ROOTS } from '../../data/roots'
-import { getTodayWords } from '../../lib/daily'
+import { generateDay } from '../../data/wordbank'
 import { buildQuestions } from '../../lib/quiz'
 import { todayKey, keysInRange } from '../../lib/date'
 import QuizRunner from './QuizRunner'
 import QuizReviewModal from './QuizReviewModal'
 
 export default function ExamCenter() {
-  const { progress, addQuizResult } = useProgressContext()
+  const { progress, addQuizResult, relativeDay } = useProgressContext()
   const [active, setActive] = useState(null) // { title, type, meta, questions }
   const [reviewQuiz, setReviewQuiz] = useState(null)
 
@@ -49,7 +49,8 @@ export default function ExamCenter() {
     )
   }
 
-  const todayWordIds = getTodayWords().map((w) => w.id)
+  // Today's quiz pulls from the current relative day's root family.
+  const todayWordIds = relativeDay ? generateDay(relativeDay).wordIds : []
   const maxGrand = Math.min(50, Math.max(0, rangeWordIds.length))
 
   return (
@@ -62,9 +63,9 @@ export default function ExamCenter() {
         </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <QuizTile
-            title="Today’s 30 words"
-            subtitle="10 questions"
-            onClick={() => startQuiz("Mini-Quiz · Today's words", 'mini', todayWordIds, 10)}
+            title="Today’s root words"
+            subtitle={`Day ${relativeDay ?? '–'} · 10 questions`}
+            onClick={() => startQuiz("Mini-Quiz · Today's root", 'mini', todayWordIds, 10)}
           />
           {ROOTS.map((r) => (
             <QuizTile

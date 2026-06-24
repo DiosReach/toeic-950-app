@@ -160,7 +160,7 @@ export default function CalendarView() {
             </p>
           ) : (
             <p className="mt-1 text-sm text-slate-400">
-              The 30 words allocated for Day {selectedRel}.
+              The {dayData?.words.length ?? ''} words allocated for Day {selectedRel}.
               {dayData?.topic && <> · 🧬 {dayData.topic.title}</>}
             </p>
           )}
