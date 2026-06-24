@@ -1,0 +1,21 @@
+# dependencies
+node_modules
+dist
+dist-ssr
+
+# local env files — keep your real Firebase keys OUT of git
+.env
+.env.local
+.env.*.local
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+*.local
