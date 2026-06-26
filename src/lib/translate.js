@@ -1,25 +1,20 @@
 // ─────────────────────────────────────────────────────────────
-// Two-register translation engine — keyless, on-device LLM.
+// Two-register translation engine — keyless cloud LLM.
 //
-// MyMemory's translation-memory matching produced garbage (e.g. "further" ->
-// "臨床技能") so it's gone. We now run a small instruction-tuned model fully in
-// the browser via WebLLM (WebGPU) — no API key, no server. The model is
-// downloaded + cached on first use. Chrome's built-in Prompt API (window.ai /
-// LanguageModel) is used first when already available (instant, no download).
+// No API key, no on-device download. Requests are routed to Pollinations.AI,
+// a free, public, CORS-enabled proxy that serves instruction-tuned LLMs over
+// an OpenAI-compatible endpoint. Typical round-trip is ~1-2s.
 //
 // For each input we ask the model for TWO distinct registers:
 //   💬 casual  — natural, white-collar / everyday Traditional Chinese (or EN)
 //   💼 formal  — strict corporate / TOEIC-grade Traditional Chinese (or EN)
 //
-// A curated PHRASEBOOK still answers common terms instantly (offline, no model).
+// A curated PHRASEBOOK still answers common terms instantly (offline).
 // Each version exposes `result` (translated text — MAIN large font) and
 // `source` (original input — small reference line).
 // ─────────────────────────────────────────────────────────────
 
-const MAX_CHUNK = 500 // per-request character budget for the model
-
-// Small, multilingual, strong at Chinese — good for EN<->ZH translation.
-const MODEL_ID = 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC'
+const MAX_CHUNK = 500 // per-request character budget per cloud call
 
 export const VERSION_META = {
   casual: { icon: '💬', label: '口語化表達', sub: 'Modern Casual Expression' },
@@ -356,46 +351,48 @@ export function splitIntoChunks(text, max = MAX_CHUNK) {
   return chunks.map((c) => c.trim()).filter(Boolean)
 }
 
-// ── On-device LLM engine ─────────────────────────────────────
-const webgpuAvailable = () => typeof navigator !== 'undefined' && 'gpu' in navigator
+// ── Keyless cloud LLM (Pollinations.AI) ──────────────────────
+// Free, public, CORS-enabled, instruction-tuned models — no API key, no
+// download. We post an OpenAI-compatible chat request and fall back to the
+// simple text endpoint if the first shape fails.
+const POLLI_OPENAI = 'https://text.pollinations.ai/openai'
+const POLLI_TEXT = 'https://text.pollinations.ai'
+const AI_MODEL = 'openai' // capable instruction-tuned model on the proxy
 
-let enginePromise = null
-// Lazily download + initialize the WebLLM engine (singleton, cached by browser).
-function getEngine(onStatus) {
-  if (!enginePromise) {
-    enginePromise = (async () => {
-      const webllm = await import('@mlc-ai/web-llm')
-      return webllm.CreateMLCEngine(MODEL_ID, {
-        initProgressCallback: (r) =>
-          onStatus?.(r.text || `Loading on-device AI… ${Math.round((r.progress || 0) * 100)}%`),
-      })
-    })().catch((err) => {
-      enginePromise = null // allow a later retry after a failed download
-      throw err
-    })
-  }
-  return enginePromise
-}
-
-// Chrome's built-in Prompt API — used only when a model is ALREADY available
-// (so we never silently trigger a multi-GB background download here).
-async function tryBuiltIn(system, user) {
+async function cloudComplete(system, user) {
+  // Primary: OpenAI-compatible chat endpoint.
   try {
-    const LM =
-      typeof window !== 'undefined' &&
-      (window.LanguageModel || window.ai?.languageModel || window.ai?.assistant)
-    if (!LM || !LM.create) return null
-    if (LM.availability) {
-      const a = await LM.availability().catch(() => null)
-      if (a !== 'available' && a !== 'readily') return null
+    const res = await fetch(POLLI_OPENAI, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: AI_MODEL,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        private: true,
+        referrer: 'toeic-vocab-cloud',
+      }),
+    })
+    if (res.ok) {
+      const data = await res.json().catch(() => null)
+      const content =
+        data?.choices?.[0]?.message?.content ?? (typeof data === 'string' ? data : null)
+      if (content) return content
     }
-    const session = await LM.create({ systemPrompt: system })
-    const out = await session.prompt(user)
-    session.destroy?.()
-    return out
   } catch {
-    return null
+    /* fall through to the simple endpoint */
   }
+
+  // Fallback: simple GET text endpoint (prompt baked into the URL path).
+  const prompt = `${system}\n\n${user}`
+  const url = `${POLLI_TEXT}/${encodeURIComponent(prompt)}?model=${AI_MODEL}&json=true&referrer=toeic-vocab-cloud`
+  const res2 = await fetch(url)
+  if (!res2.ok) throw new Error('AI_HTTP_' + res2.status)
+  return (await res2.text()) || ''
 }
 
 const SYSTEM_PROMPT = `You are a precise translation engine for a TOEIC business-English study app.
@@ -433,24 +430,7 @@ function extractJson(raw) {
   return null
 }
 
-async function runLLM(user, onStatus) {
-  // 1) Chrome built-in (instant when present).
-  const builtin = await tryBuiltIn(SYSTEM_PROMPT, user)
-  if (builtin) return builtin
-  // 2) WebLLM (WebGPU, downloads model on first use).
-  if (!webgpuAvailable()) throw new Error('NO_WEBGPU')
-  const engine = await getEngine(onStatus)
-  onStatus?.('Generating translation…')
-  const reply = await engine.chat.completions.create({
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: user },
-    ],
-    temperature: 0.2,
-    max_tokens: 400,
-  })
-  return reply?.choices?.[0]?.message?.content || ''
-}
+const runLLM = (user) => cloudComplete(SYSTEM_PROMPT, user)
 
 const buildResult = (text, direction, engine, casualText, formalText, isEn2Zh) => {
   const build = (key, r) => ({
@@ -465,8 +445,8 @@ const buildResult = (text, direction, engine, casualText, formalText, isEn2Zh) =
 
 /**
  * Produce the casual + formal renderings for the given text + direction.
- * Tries: curated phrasebook (instant) → on-device LLM (context-aware).
- * @param {{onStatus?: (s:string)=>void}} [opts] progress callback for the UI
+ * Tries: curated phrasebook (instant) → keyless cloud LLM (context-aware).
+ * @param {{onStatus?: (s:string)=>void}} [opts] status callback for the UI
  * @returns {{source, direction, engine, versions: object[]}}
  */
 export async function generateVariants(rawText, direction = 'en2zh', opts = {}) {
@@ -474,18 +454,19 @@ export async function generateVariants(rawText, direction = 'en2zh', opts = {}) 
   const text = rawText.trim()
   const isEn2Zh = direction === 'en2zh'
 
-  // 1) Curated phrasebook fast-path (offline, instant, no model needed).
+  // 1) Curated phrasebook fast-path (offline, instant).
   const entry = isEn2Zh ? PHRASEBOOK[phrasebookKey(text)] : null
   if (entry) {
     return buildResult(text, direction, 'phrasebook', entry.us.zh, entry.formal.zh, isEn2Zh)
   }
 
-  // 2) On-device LLM, chunked for long input.
+  // 2) Keyless cloud LLM, chunked for long input (chunks run in parallel).
+  onStatus?.('Translating…')
   const chunks = splitIntoChunks(text, MAX_CHUNK)
+  const raws = await Promise.all(chunks.map((ch) => runLLM(userPrompt(ch, isEn2Zh))))
   const casuals = []
   const formals = []
-  for (const ch of chunks) {
-    const raw = await runLLM(userPrompt(ch, isEn2Zh), onStatus)
+  for (const raw of raws) {
     const obj = extractJson(raw) || {}
     casuals.push((obj.casual || '').trim())
     formals.push((obj.formal || '').trim())

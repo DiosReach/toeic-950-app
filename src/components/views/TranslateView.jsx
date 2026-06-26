@@ -33,21 +33,12 @@ export default function TranslateView() {
     setBusy(true)
     setError('')
     setResult(null)
-    setStatus('Preparing on-device AI…')
+    setStatus('Translating…')
     try {
       const out = await generateVariants(text, direction, { onStatus: setStatus })
       setResult({ mode, ...out })
-    } catch (err) {
-      const m = err?.message
-      if (m === 'NO_WEBGPU') {
-        setError(
-          'On-device AI needs a WebGPU browser (Chrome / Edge 113+ or Safari 17+). Please open the app there to translate.',
-        )
-      } else if (m === 'EMPTY_AI') {
-        setError('The AI returned an unexpected response. Please try again.')
-      } else {
-        setError('Translation engine error. Please try again.')
-      }
+    } catch {
+      setError('The AI service is busy right now. Please try again in a moment.')
     } finally {
       setBusy(false)
       setStatus('')
@@ -70,7 +61,7 @@ export default function TranslateView() {
       <div>
         <h1 className="text-2xl font-extrabold">智慧雙模翻譯中心</h1>
         <p className="text-sm text-slate-400">
-          On-device AI translation · 💬 口語化表達 / 💼 商業正式翻譯
+          Cloud AI translation · 💬 口語化表達 / 💼 商業正式翻譯
         </p>
       </div>
 
@@ -186,7 +177,7 @@ export default function TranslateView() {
                       : 'bg-indigo-500/15 text-indigo-300'
                   }`}
                 >
-                  {result.engine === 'phrasebook' ? '✦ instant' : '🤖 on-device AI'}
+                  {result.engine === 'phrasebook' ? '✦ instant' : '🤖 cloud AI'}
                 </span>
                 <button
                   onClick={saveCurrent}
