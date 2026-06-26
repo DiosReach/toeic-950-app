@@ -1,15 +1,16 @@
 // ─────────────────────────────────────────────────────────────
-// Two-register translation engine — keyless cloud LLM.
+// Hybrid translation engine — Local-First cache + keyless Cloud AI.
 //
-// No API key, no on-device download. Requests are routed to Pollinations.AI,
-// a free, public, CORS-enabled proxy that serves instruction-tuned LLMs over
-// an OpenAI-compatible endpoint. Typical round-trip is ~1-2s.
+// Step 1 (instant, 0s): a built-in elite dictionary of 150+ high-frequency
+//   TOEIC / workplace words with pre-baked dual-register Traditional Chinese.
+//   A lowercase-trim match returns immediately with ZERO network.
+// Step 2 (only if not cached): route to Pollinations.AI — a free, public,
+//   CORS-enabled, OpenAI-compatible LLM proxy (no API key, no download) — and
+//   show the "Translating…" spinner.
 //
-// For each input we ask the model for TWO distinct registers:
-//   💬 casual  — natural, white-collar / everyday Traditional Chinese (or EN)
-//   💼 formal  — strict corporate / TOEIC-grade Traditional Chinese (or EN)
-//
-// A curated PHRASEBOOK still answers common terms instantly (offline).
+// Two registers everywhere:
+//   💬 casual  — natural, white-collar / everyday phrasing
+//   💼 formal  — strict corporate / TOEIC-grade phrasing
 // Each version exposes `result` (translated text — MAIN large font) and
 // `source` (original input — small reference line).
 // ─────────────────────────────────────────────────────────────
@@ -21,307 +22,221 @@ export const VERSION_META = {
   formal: { icon: '💼', label: '商業正式翻譯', sub: 'Elite Business & TOEIC Formal' },
 }
 
-// ── Curated phrasebook: authentic, contemporary 3-version renderings ──
-const PHRASEBOOK = {
-  schedule: {
-    us: { en: 'Book it in / Lock it in', zh: '排進行程、定下來' },
-    uk: { en: 'Diary it / Slot it in', zh: '記進日誌、安排檔期' },
-    formal: { en: 'Prioritize according to the itinerary', zh: '依行程表排定優先順序' },
-  },
-  meeting: {
-    us: { en: 'Hop on a call / sync up', zh: '開個會、同步一下' },
-    uk: { en: 'Have a quick catch-up', zh: '碰個面、聊一下' },
-    formal: { en: 'Convene a formal meeting', zh: '召開正式會議' },
-  },
-  deadline: {
-    us: { en: 'When’s this due? / the drop-dead date', zh: '截止日、最後期限' },
-    uk: { en: 'the cut-off / when’s it due by', zh: '截止時間' },
-    formal: { en: 'the submission deadline', zh: '繳交期限' },
-  },
-  cancel: {
-    us: { en: 'Call it off / scrap it', zh: '取消、作罷' },
-    uk: { en: 'Bin it / knock it on the head', zh: '取消、喊停' },
-    formal: { en: 'Cancel the arrangement', zh: '取消該項安排' },
-  },
-  urgent: {
-    us: { en: 'It’s on fire / need it ASAP', zh: '很急、火燒眉毛' },
-    uk: { en: 'It’s rather pressing', zh: '相當緊急' },
-    formal: { en: 'This matter requires immediate attention', zh: '此事需立即處理' },
-  },
-  busy: {
-    us: { en: 'Slammed / swamped', zh: '忙翻了' },
-    uk: { en: 'Rushed off my feet', zh: '忙得不可開交' },
-    formal: { en: 'Heavily committed at present', zh: '目前事務繁忙' },
-  },
-  available: {
-    us: { en: 'Free / around', zh: '有空' },
-    uk: { en: 'Free / about', zh: '有空' },
-    formal: { en: 'Available at your convenience', zh: '有空檔、方便時' },
-  },
-  confirm: {
-    us: { en: 'Lock it in / you’re all set', zh: '確定、搞定' },
-    uk: { en: 'That’s sorted / all confirmed', zh: '搞定、確認好了' },
-    formal: { en: 'Confirm the arrangement', zh: '確認該項安排' },
-  },
-  contact: {
-    us: { en: 'Hit me up / ping me', zh: '敲我、聯絡我' },
-    uk: { en: 'Drop me a line / give me a bell', zh: '跟我說一聲' },
-    formal: { en: 'Contact me directly', zh: '直接與我聯繫' },
-  },
-  'follow up': {
-    us: { en: 'Circle back / loop back', zh: '再跟進、回頭聊' },
-    uk: { en: 'Chase it up', zh: '追一下進度' },
-    formal: { en: 'Follow up accordingly', zh: '後續妥善跟進' },
-  },
-  'reach out': {
-    us: { en: 'Hit them up / ping them', zh: '敲一下、聯絡他們' },
-    uk: { en: 'Drop them a line', zh: '跟他們說一聲' },
-    formal: { en: 'Make contact with the relevant party', zh: '與相關人員聯繫' },
-  },
-  'touch base': {
-    us: { en: 'Touch base / sync up', zh: '碰一下、同步一下' },
-    uk: { en: 'Have a catch-up', zh: '聊一下近況' },
-    formal: { en: 'Liaise on the matter', zh: '就此事聯繫協調' },
-  },
-  thanks: {
-    us: { en: 'Thanks a ton / appreciate it', zh: '多謝啦、感激不盡' },
-    uk: { en: 'Cheers / ta', zh: '謝啦' },
-    formal: { en: 'I sincerely appreciate it', zh: '由衷感謝' },
-  },
-  ok: {
-    us: { en: 'Sounds good / you got it', zh: '好喔、沒問題' },
-    uk: { en: 'Brilliant / right-o', zh: '好的、沒問題' },
-    formal: { en: 'Understood and noted', zh: '了解、敬悉' },
-  },
-  'no problem': {
-    us: { en: 'No worries / you bet', zh: '沒事、不客氣' },
-    uk: { en: 'No bother / not at all', zh: '不麻煩、不客氣' },
-    formal: { en: 'It is my pleasure', zh: '樂意之至' },
-  },
-  problem: {
-    us: { en: 'A glitch / a snag', zh: '出包、卡關' },
-    uk: { en: 'A hiccup / a spot of bother', zh: '小狀況' },
-    formal: { en: 'An issue requiring resolution', zh: '待解決的問題' },
-  },
-  expensive: {
-    us: { en: 'Pricey / steep', zh: '貴森森' },
-    uk: { en: 'Dear / pricey', zh: '偏貴' },
-    formal: { en: 'Costly', zh: '成本高昂' },
-  },
-  'let me know': {
-    us: { en: 'Gimme a shout / keep me posted', zh: '跟我說一聲、隨時更新' },
-    uk: { en: 'Give us a shout', zh: '讓我知道一下' },
-    formal: { en: 'Please advise', zh: '敬請告知' },
-  },
-  'great job': {
-    us: { en: 'Crushed it / nailed it', zh: '做得超棒' },
-    uk: { en: 'Top marks / well done', zh: '做得好' },
-    formal: { en: 'An outstanding performance', zh: '表現傑出' },
-  },
-  asap: {
-    us: { en: 'ASAP / like yesterday', zh: '越快越好' },
-    uk: { en: 'As soon as you can', zh: '盡快' },
-    formal: { en: 'At your earliest convenience', zh: '請盡早辦理' },
-  },
-  fyi: {
-    us: { en: 'Heads up / FYI', zh: '給你參考、提醒一下' },
-    uk: { en: 'Just so you know', zh: '讓你知道一下' },
-    formal: { en: 'For your information', zh: '供您參考' },
-  },
-  update: {
-    us: { en: 'Quick update / where are we at?', zh: '快速更新、進度到哪了' },
-    uk: { en: 'A quick update / where are we?', zh: '更新一下進度' },
-    formal: { en: 'A status update', zh: '進度報告' },
-  },
-  sync: {
-    us: { en: 'Sync up / get on the same page', zh: '同步、對齊一下' },
-    uk: { en: 'Have a quick catch-up', zh: '碰一下、對齊' },
-    formal: { en: 'Align on the matter', zh: '就此事達成共識' },
-  },
-  brainstorm: {
-    us: { en: 'Spitball some ideas', zh: '隨便丟點子' },
-    uk: { en: 'Kick some ideas around', zh: '一起想想點子' },
-    formal: { en: 'Hold an ideation session', zh: '召開腦力激盪會議' },
-  },
-  feedback: {
-    us: { en: 'Thoughts? / let me know what you think', zh: '你覺得呢？' },
-    uk: { en: 'Any comments? / your thoughts', zh: '有什麼意見嗎' },
-    formal: { en: 'Your feedback would be appreciated', zh: '敬請提供回饋' },
-  },
-  approve: {
-    us: { en: 'Give it the green light', zh: '放行、批准' },
-    uk: { en: 'Give it the nod / sign off', zh: '點頭、核准' },
-    formal: { en: 'Grant approval', zh: '予以核准' },
-  },
-  'sign off': {
-    us: { en: 'Sign off on it', zh: '簽核、放行' },
-    uk: { en: 'Give it the sign-off', zh: '核可' },
-    formal: { en: 'Provide formal authorization', zh: '正式授權' },
-  },
-  priority: {
-    us: { en: 'Top of the list / front burner', zh: '第一順位' },
-    uk: { en: 'Top priority / first port of call', zh: '最優先' },
-    formal: { en: 'The highest priority', zh: '最高優先事項' },
-  },
-  blocker: {
-    us: { en: 'What’s blocking you? / a roadblock', zh: '卡點、卡住了' },
-    uk: { en: 'A sticking point', zh: '卡關的地方' },
-    formal: { en: 'An impediment to progress', zh: '進度受阻的因素' },
-  },
-  bandwidth: {
-    us: { en: 'Do you have the bandwidth?', zh: '你有餘力嗎' },
-    uk: { en: 'Have you got capacity?', zh: '你忙得過來嗎' },
-    formal: { en: 'Availability of resources', zh: '人力/資源是否充裕' },
-  },
-  'out of office': {
-    us: { en: 'I’m OOO / off the grid', zh: '我休假、不在線上' },
-    uk: { en: 'I’m out of office / away', zh: '我不在辦公室' },
-    formal: { en: 'I am currently out of office', zh: '本人目前不在辦公室' },
-  },
-  'work from home': {
-    us: { en: 'WFH / remote today', zh: '在家工作' },
-    uk: { en: 'Working from home', zh: '在家上班' },
-    formal: { en: 'Working remotely', zh: '遠距辦公' },
-  },
-  deal: {
-    us: { en: 'It’s a deal / done deal', zh: '成交、說定了' },
-    uk: { en: 'Sorted / that’s a deal', zh: '講定了' },
-    formal: { en: 'The agreement is finalized', zh: '協議已定案' },
-  },
-  sorry: {
-    us: { en: 'My bad / sorry about that', zh: '我的錯、抱歉' },
-    uk: { en: 'Sorry about that / apologies', zh: '抱歉' },
-    formal: { en: 'Please accept my apologies', zh: '敬請見諒' },
-  },
-  congratulations: {
-    us: { en: 'Way to go / congrats', zh: '太讚了、恭喜' },
-    uk: { en: 'Well done / congrats', zh: '做得好、恭喜' },
-    formal: { en: 'My sincere congratulations', zh: '謹致賀忱' },
-  },
-  hello: {
-    us: { en: 'Hey / what’s up', zh: '嘿、你好' },
-    uk: { en: 'Hiya / you alright?', zh: '嗨、還好嗎' },
-    formal: { en: 'Good day', zh: '您好' },
-  },
-  goodbye: {
-    us: { en: 'Catch you later / see ya', zh: '回頭見' },
-    uk: { en: 'Cheerio / see you', zh: '再見' },
-    formal: { en: 'Kind regards', zh: '敬祝安好' },
-  },
-  cheap: {
-    us: { en: 'A steal / dirt cheap', zh: '超便宜、划算' },
-    uk: { en: 'A bargain / cheap as chips', zh: '便宜、划算' },
-    formal: { en: 'Cost-effective', zh: '具成本效益' },
-  },
-  budget: {
-    us: { en: 'What’s the budget?', zh: '預算多少' },
-    uk: { en: 'The budget / the spend', zh: '預算' },
-    formal: { en: 'The allocated budget', zh: '核定預算' },
-  },
-  raise: {
-    us: { en: 'Ask for a raise / a bump', zh: '加薪' },
-    uk: { en: 'Ask for a pay rise', zh: '加薪' },
-    formal: { en: 'Request a salary increase', zh: '申請調薪' },
-  },
-  promotion: {
-    us: { en: 'Move up / get bumped up', zh: '升職' },
-    uk: { en: 'A step up / a promotion', zh: '升遷' },
-    formal: { en: 'A promotion', zh: '晉升' },
-  },
-  hire: {
-    us: { en: 'Bring someone on / onboard them', zh: '找人進來、報到' },
-    uk: { en: 'Take someone on', zh: '聘人' },
-    formal: { en: 'Recruit a candidate', zh: '招募人選' },
-  },
-  'lay off': {
-    us: { en: 'Let someone go', zh: '裁員、讓人走' },
-    uk: { en: 'Make someone redundant', zh: '裁撤、資遣' },
-    formal: { en: 'Terminate employment', zh: '終止聘僱' },
-  },
-  quit: {
-    us: { en: 'Call it quits / bounce', zh: '不幹了、走人' },
-    uk: { en: 'Jack it in / hand in my notice', zh: '辭職、遞辭呈' },
-    formal: { en: 'Tender one’s resignation', zh: '提出辭呈' },
-  },
-  help: {
-    us: { en: 'Can you help me out?', zh: '幫個忙好嗎' },
-    uk: { en: 'Could you give me a hand?', zh: '幫個忙' },
-    formal: { en: 'I would appreciate your assistance', zh: '懇請協助' },
-  },
-  idea: {
-    us: { en: 'Got a thought / here’s an idea', zh: '有個點子' },
-    uk: { en: 'A thought / a suggestion', zh: '一個想法' },
-    formal: { en: 'A proposal', zh: '一項提議' },
-  },
-  goal: {
-    us: { en: 'What are we shooting for?', zh: '目標是什麼' },
-    uk: { en: 'What we’re aiming for', zh: '目標' },
-    formal: { en: 'The objective', zh: '目標/標的' },
-  },
-  done: {
-    us: { en: 'All set / good to go', zh: '搞定、沒問題了' },
-    uk: { en: 'All sorted / done and dusted', zh: '搞定、完成' },
-    formal: { en: 'The task is complete', zh: '任務已完成' },
-  },
-  quick: {
-    us: { en: 'Real quick / in a sec', zh: '很快、一下下' },
-    uk: { en: 'In a tick / shortly', zh: '馬上、一會兒' },
-    formal: { en: 'Momentarily', zh: '稍候、即刻' },
-  },
-  soon: {
-    us: { en: 'Any minute / super soon', zh: '很快、馬上' },
-    uk: { en: 'Shortly / in a bit', zh: '不久、待會' },
-    formal: { en: 'In due course', zh: '適時、不久後' },
-  },
-  agree: {
-    us: { en: 'I’m down / works for me', zh: '我OK、可以' },
-    uk: { en: 'Sounds good / I’m happy with that', zh: '好啊、可以' },
-    formal: { en: 'I concur', zh: '本人同意' },
-  },
-  question: {
-    us: { en: 'Got a quick question', zh: '有個小問題' },
-    uk: { en: 'A quick question', zh: '想問一下' },
-    formal: { en: 'I have an inquiry', zh: '有一事請教' },
-  },
-  review: {
-    us: { en: 'Take a look / look it over', zh: '看一下、過目' },
-    uk: { en: 'Have a look / cast an eye over', zh: '看一下' },
-    formal: { en: 'Review the document', zh: '審閱文件' },
-  },
-  welcome: {
-    us: { en: 'Welcome aboard', zh: '歡迎加入' },
-    uk: { en: 'Welcome / good to have you', zh: '歡迎' },
-    formal: { en: 'We are pleased to welcome you', zh: '謹此歡迎您' },
-  },
-  ping: {
-    us: { en: 'Ping me / shoot me a message', zh: '敲我一下' },
-    uk: { en: 'Drop me a message', zh: '傳個訊息給我' },
-    formal: { en: 'Send me a message', zh: '傳送訊息給我' },
-  },
-  'circle back': {
-    us: { en: 'Circle back / loop back', zh: '稍後再聊、回頭討論' },
-    uk: { en: 'Come back to it', zh: '回頭再說' },
-    formal: { en: 'Revisit this later', zh: '稍後再議' },
-  },
-  break: {
-    us: { en: 'Grab a coffee / take five', zh: '休息一下、喝杯咖啡' },
-    uk: { en: 'Have a tea break / a breather', zh: '喝個茶、休息一下' },
-    formal: { en: 'Take a short break', zh: '稍作休息' },
-  },
-  stressed: {
-    us: { en: 'I’m stressed / under the gun', zh: '壓力山大' },
-    uk: { en: 'I’m under pressure / frazzled', zh: '壓力很大' },
-    formal: { en: 'Under considerable pressure', zh: '承受相當壓力' },
-  },
+// ── Built-in elite dictionary (English → dual-register Traditional Chinese) ──
+// Keys are lowercase. casual = conversational; formal = business/TOEIC.
+export const LOCAL_DICT = {
+  account: { casual: '帳戶、客戶', formal: '帳目、往來客戶' },
+  achieve: { casual: '做到、達成', formal: '達成、實現' },
+  acquire: { casual: '拿到、學到', formal: '取得、收購' },
+  adjust: { casual: '調一下、改', formal: '調整、修正' },
+  agenda: { casual: '要談的事', formal: '議程' },
+  allocate: { casual: '分一分、撥給', formal: '分配、撥配' },
+  announce: { casual: '公布、說一聲', formal: '宣布、公告' },
+  annual: { casual: '一年一次的', formal: '年度的、每年的' },
+  appoint: { casual: '指派、找人來做', formal: '任命、指派' },
+  appreciate: { casual: '感謝、懂得欣賞', formal: '感激、體認' },
+  approve: { casual: '同意、放行', formal: '核准、批准' },
+  arrange: { casual: '安排、喬一下', formal: '安排、籌備' },
+  assess: { casual: '看看怎樣、評一下', formal: '評估、評定' },
+  assign: { casual: '派工作', formal: '指派、分派' },
+  assist: { casual: '幫忙', formal: '協助' },
+  attach: { casual: '附上、夾帶', formal: '附加、檢附' },
+  attend: { casual: '出席、去', formal: '出席、參加' },
+  available: { casual: '有空、有貨', formal: '可供使用、可洽詢' },
+  avoid: { casual: '避開、別碰', formal: '避免、規避' },
+  balance: { casual: '餘額、平衡', formal: '結餘、平衡' },
+  benefit: { casual: '好處、福利', formal: '效益、福利' },
+  bill: { casual: '帳單', formal: '帳單、票據' },
+  board: { casual: '董事會', formal: '董事會、理事會' },
+  branch: { casual: '分店', formal: '分公司、分行' },
+  brief: { casual: '簡單說一下', formal: '簡報、摘要說明' },
+  budget: { casual: '預算多少', formal: '預算、經費' },
+  cancel: { casual: '取消、不辦了', formal: '取消、撤銷' },
+  candidate: { casual: '人選、應徵者', formal: '候選人、應徵者' },
+  capacity: { casual: '容量、能耐', formal: '產能、容量' },
+  career: { casual: '工作、事業', formal: '職涯、職業生涯' },
+  client: { casual: '客人', formal: '客戶、委託人' },
+  colleague: { casual: '同事', formal: '同仁、同事' },
+  commit: { casual: '答應、投入', formal: '承諾、致力' },
+  commute: { casual: '通勤、上下班', formal: '通勤' },
+  compensate: { casual: '補償、賠', formal: '補償、賠償' },
+  compete: { casual: '競爭、比', formal: '競爭、角逐' },
+  complete: { casual: '做完、弄好', formal: '完成、辦理完竣' },
+  comply: { casual: '照做、配合', formal: '遵守、遵循' },
+  conduct: { casual: '進行、做', formal: '執行、進行' },
+  confirm: { casual: '確定、敲定', formal: '確認、核實' },
+  consult: { casual: '問一下、商量', formal: '諮詢、洽詢' },
+  contact: { casual: '聯絡、找他', formal: '聯繫、洽詢' },
+  contract: { casual: '合約', formal: '合約、契約' },
+  contribute: { casual: '出一份力、貢獻', formal: '貢獻、挹注' },
+  coordinate: { casual: '喬一下、協調', formal: '協調、統籌' },
+  cost: { casual: '花多少、成本', formal: '成本、費用' },
+  credit: { casual: '信用、賒帳', formal: '信用、賒欠額度' },
+  deadline: { casual: '截止日、死線', formal: '截止期限、繳交期限' },
+  deal: { casual: '交易、說定', formal: '交易、協議' },
+  decline: { casual: '變少、婉拒', formal: '下滑、婉拒' },
+  decrease: { casual: '變少、減少', formal: '減少、遞減' },
+  delay: { casual: '拖到、晚了', formal: '延遲、延誤' },
+  deliver: { casual: '送、交出來', formal: '交付、運送' },
+  demand: { casual: '需求、要', formal: '需求、要求' },
+  department: { casual: '部門', formal: '部門、處室' },
+  deposit: { casual: '訂金、存錢', formal: '訂金、存款' },
+  determine: { casual: '決定、看出', formal: '決定、判定' },
+  develop: { casual: '做出來、發展', formal: '開發、發展' },
+  discount: { casual: '打折、便宜點', formal: '折扣、優惠' },
+  discuss: { casual: '聊一下、討論', formal: '討論、商議' },
+  distribute: { casual: '發、分給', formal: '分發、配銷' },
+  document: { casual: '文件、檔案', formal: '文件、文書' },
+  draft: { casual: '草稿、初稿', formal: '草案、初稿' },
+  due: { casual: '到期、該交了', formal: '到期、屆期' },
+  efficient: { casual: '有效率、又快又好', formal: '有效率的、高效的' },
+  eligible: { casual: '有資格', formal: '符合資格、具備資格' },
+  employ: { casual: '雇用、請人', formal: '聘僱、任用' },
+  encourage: { casual: '鼓勵、推一把', formal: '鼓勵、促進' },
+  enhance: { casual: '變更好、加強', formal: '提升、強化' },
+  ensure: { casual: '確保、顧好', formal: '確保、保證' },
+  equipment: { casual: '設備、傢伙', formal: '設備、器材' },
+  estimate: { casual: '抓個大概、估', formal: '估計、估算' },
+  evaluate: { casual: '評一評、看好不好', formal: '評估、評鑑' },
+  execute: { casual: '動手做、搞定', formal: '執行、實行、履行' },
+  expand: { casual: '變大、擴點', formal: '擴展、擴大' },
+  expense: { casual: '花費、開銷', formal: '費用、支出' },
+  expertise: { casual: '專長、很厲害', formal: '專業知識、專長' },
+  extend: { casual: '延長、拉長', formal: '延長、展延' },
+  facility: { casual: '場地、設施', formal: '設施、廠房' },
+  feedback: { casual: '意見、回饋', formal: '回饋意見、反饋' },
+  figure: { casual: '數字、想出來', formal: '數據、數字' },
+  finance: { casual: '錢的事、財務', formal: '財務、融資' },
+  forecast: { casual: '預估、看趨勢', formal: '預測、預估' },
+  further: { casual: '再往前、另外的、聊更多', formal: '進一步推動、深化、補充說明' },
+  generate: { casual: '生出、帶來', formal: '產生、創造' },
+  goal: { casual: '目標', formal: '目標、標的' },
+  grant: { casual: '給、撥款', formal: '核給、補助' },
+  growth: { casual: '成長、變多', formal: '成長、增長' },
+  guarantee: { casual: '保證、掛保證', formal: '保證、擔保' },
+  handle: { casual: '處理、搞定', formal: '處理、辦理' },
+  headquarters: { casual: '總部', formal: '總公司、總部' },
+  hire: { casual: '找人、請人', formal: '聘僱、招募' },
+  implement: { casual: '做出來、落實', formal: '實施、執行、導入' },
+  improve: { casual: '變更好、改進', formal: '改善、提升' },
+  income: { casual: '收入、賺的', formal: '收入、所得' },
+  increase: { casual: '變多、加', formal: '增加、提高' },
+  industry: { casual: '業界、行業', formal: '產業、業界' },
+  inform: { casual: '告訴、說一聲', formal: '告知、通知' },
+  invoice: { casual: '發票、帳單', formal: '發票、請款單' },
+  issue: { casual: '問題、狀況', formal: '議題、問題' },
+  item: { casual: '東西、項目', formal: '項目、品項' },
+  launch: { casual: '推出、上架', formal: '推出、發表' },
+  lease: { casual: '租', formal: '租賃、承租' },
+  manage: { casual: '管、搞定', formal: '管理、經營' },
+  manufacture: { casual: '製造、做', formal: '製造、生產' },
+  margin: { casual: '賺頭、利潤', formal: '利潤、毛利' },
+  market: { casual: '市場、客群', formal: '市場、行銷' },
+  meeting: { casual: '開會、碰面', formal: '會議' },
+  merge: { casual: '合併、併在一起', formal: '合併、整併' },
+  negotiate: { casual: '談、喬價錢', formal: '協商、談判' },
+  notify: { casual: '通知、說一聲', formal: '通知、告知' },
+  objective: { casual: '目標、想達到的', formal: '目標、宗旨' },
+  obtain: { casual: '拿到、弄到', formal: '取得、獲取' },
+  offer: { casual: '開的條件、提供', formal: '提議、錄取通知' },
+  operate: { casual: '運作、開', formal: '營運、操作' },
+  opportunity: { casual: '機會', formal: '機會、商機' },
+  order: { casual: '訂、下單', formal: '訂單、訂購' },
+  organize: { casual: '整理、辦', formal: '籌辦、規劃' },
+  outcome: { casual: '結果', formal: '結果、成效' },
+  overtime: { casual: '加班', formal: '加班、逾時工作' },
+  partner: { casual: '夥伴、合夥', formal: '合作夥伴、合夥人' },
+  payment: { casual: '付款、款', formal: '付款、給付' },
+  performance: { casual: '表現、業績', formal: '績效、表現' },
+  permit: { casual: '准、許可證', formal: '許可、准許' },
+  policy: { casual: '規定、做法', formal: '政策、規範' },
+  position: { casual: '職位、位子', formal: '職位、職務' },
+  postpone: { casual: '延後、改期', formal: '延期、延後' },
+  priority: { casual: '先做的事、重點', formal: '優先事項、優先順序' },
+  procedure: { casual: '步驟、流程', formal: '程序、作業流程' },
+  process: { casual: '流程、處理', formal: '流程、處理程序' },
+  produce: { casual: '做出、生產', formal: '生產、製造' },
+  profit: { casual: '賺的、利潤', formal: '利潤、盈餘' },
+  progress: { casual: '進度', formal: '進展、進度' },
+  project: { casual: '案子、專案', formal: '專案、計畫' },
+  promote: { casual: '升職、推廣', formal: '晉升、推廣' },
+  proposal: { casual: '提案、建議', formal: '提案、企劃書' },
+  prospect: { casual: '機會、盼頭、未來性', formal: '前景、展望、潛在客戶' },
+  provide: { casual: '給、提供', formal: '提供、供應' },
+  purchase: { casual: '買', formal: '採購、購置' },
+  quality: { casual: '品質、好不好', formal: '品質、質量' },
+  quote: { casual: '報價、開價', formal: '報價、估價單' },
+  range: { casual: '範圍、種類', formal: '範圍、區間' },
+  rate: { casual: '費率、比例', formal: '費率、比率' },
+  receipt: { casual: '收據、發票', formal: '收據、簽收' },
+  recommend: { casual: '推薦、建議', formal: '推薦、建議' },
+  recruit: { casual: '找人、招人', formal: '招募、徵才' },
+  reduce: { casual: '減少、砍', formal: '減少、降低' },
+  refund: { casual: '退錢', formal: '退款、退費' },
+  register: { casual: '報名、登記', formal: '登記、註冊' },
+  reimburse: { casual: '報帳、還錢', formal: '核銷、報支' },
+  reject: { casual: '不要、退回', formal: '拒絕、駁回' },
+  release: { casual: '推出、放出', formal: '發布、釋出' },
+  reliable: { casual: '靠得住', formal: '可靠的、穩定的' },
+  remind: { casual: '提醒一下', formal: '提醒、提示' },
+  renew: { casual: '續、再辦一次', formal: '續約、更新' },
+  replace: { casual: '換掉、替', formal: '更換、替換' },
+  report: { casual: '報告、回報', formal: '報告、呈報' },
+  request: { casual: '要求、拜託', formal: '要求、請求' },
+  require: { casual: '需要、要', formal: '要求、規定須' },
+  reschedule: { casual: '改時間、改期', formal: '重新安排時程、改期' },
+  reserve: { casual: '訂、留位', formal: '預訂、保留' },
+  resign: { casual: '離職、不幹了', formal: '辭職、請辭' },
+  resolve: { casual: '解決、搞定', formal: '解決、化解' },
+  resource: { casual: '資源、人手', formal: '資源' },
+  responsible: { casual: '負責', formal: '負責的、職責所在' },
+  resume: { casual: '重新開始、履歷', formal: '恢復、履歷表' },
+  revenue: { casual: '營收、賺的', formal: '營收、收益' },
+  review: { casual: '看一下、檢查', formal: '審查、檢視' },
+  revise: { casual: '改一改', formal: '修訂、修正' },
+  salary: { casual: '薪水', formal: '薪資、薪俸' },
+  sample: { casual: '樣品、試', formal: '樣品、樣本' },
+  schedule: { casual: '排時間、安排', formal: '時程表、排定行程' },
+  sector: { casual: '領域、行業', formal: '產業別、部門' },
+  secure: { casual: '弄到手、安全', formal: '取得、確保' },
+  shift: { casual: '班、輪班', formal: '班別、輪班' },
+  ship: { casual: '出貨、寄', formal: '出貨、運送' },
+  shortage: { casual: '缺貨、不夠', formal: '短缺、不足' },
+  skill: { casual: '技能、本事', formal: '技能、專長' },
+  solution: { casual: '解法、辦法', formal: '解決方案、對策' },
+  staff: { casual: '員工、人手', formal: '員工、職員' },
+  stock: { casual: '庫存、股票', formal: '存貨、股票' },
+  strategy: { casual: '策略、招', formal: '策略、方略' },
+  submit: { casual: '交、送出', formal: '提交、呈交' },
+  supervise: { casual: '盯、看著', formal: '督導、監督' },
+  supply: { casual: '供應、給貨', formal: '供應、供給' },
+  support: { casual: '幫、撐', formal: '支援、支持' },
+  survey: { casual: '問卷、調查', formal: '調查、問卷' },
+  target: { casual: '目標', formal: '目標、標的' },
+  task: { casual: '工作、任務', formal: '任務、工作項目' },
+  tax: { casual: '稅', formal: '稅、稅務' },
+  team: { casual: '團隊、組', formal: '團隊、小組' },
+  terminate: { casual: '結束、解約', formal: '終止、解除' },
+  transfer: { casual: '轉、調', formal: '轉移、調動、匯款' },
+  update: { casual: '更新、說進度', formal: '更新、最新狀況' },
+  urgent: { casual: '很急', formal: '緊急、急件' },
+  vacancy: { casual: '職缺、空位', formal: '職缺、空缺' },
+  vendor: { casual: '廠商、賣家', formal: '供應商、廠商' },
+  verify: { casual: '確認、查一下', formal: '核實、查證' },
+  warehouse: { casual: '倉庫', formal: '倉庫、物流中心' },
+  warranty: { casual: '保固', formal: '保固、保證書' },
+  withdraw: { casual: '領錢、退出', formal: '提領、撤回' },
+  workflow: { casual: '工作流程', formal: '工作流程、作業流程' },
+  workload: { casual: '工作量', formal: '工作負荷、業務量' },
 }
 
 export const looksLikeWord = (text) => text.trim().split(/\s+/).length === 1
 
-const phrasebookKey = (s) =>
+// Normalize an input to a dictionary key: trimmed, lowercased, depunctuated.
+const dictKey = (s) =>
   s.trim().toLowerCase().replace(/[.!?,;:'"]/g, '').replace(/\s+/g, ' ')
 
-// Split long text into <MAX_CHUNK pieces on sentence boundaries (handles both
-// Latin .!? and CJK 。！？；plus newlines). Long single sentences are hard-wrapped.
+// Split long text into <MAX_CHUNK pieces on sentence boundaries (Latin + CJK).
 export function splitIntoChunks(text, max = MAX_CHUNK) {
   const clean = text.trim()
   if (clean.length <= max) return [clean]
@@ -351,13 +266,10 @@ export function splitIntoChunks(text, max = MAX_CHUNK) {
   return chunks.map((c) => c.trim()).filter(Boolean)
 }
 
-// ── Keyless cloud LLM (Pollinations.AI) ──────────────────────
-// Free, public, CORS-enabled, instruction-tuned models — no API key, no
-// download. We post an OpenAI-compatible chat request and fall back to the
-// simple text endpoint if the first shape fails.
+// ── Keyless cloud LLM (Pollinations.AI) — only for non-cached text ──
 const POLLI_OPENAI = 'https://text.pollinations.ai/openai'
 const POLLI_TEXT = 'https://text.pollinations.ai'
-const AI_MODEL = 'openai' // capable instruction-tuned model on the proxy
+const AI_MODEL = 'openai'
 
 async function cloudComplete(system, user) {
   // Primary: OpenAI-compatible chat endpoint.
@@ -386,8 +298,7 @@ async function cloudComplete(system, user) {
   } catch {
     /* fall through to the simple endpoint */
   }
-
-  // Fallback: simple GET text endpoint (prompt baked into the URL path).
+  // Fallback: simple GET text endpoint.
   const prompt = `${system}\n\n${user}`
   const url = `${POLLI_TEXT}/${encodeURIComponent(prompt)}?model=${AI_MODEL}&json=true&referrer=toeic-vocab-cloud`
   const res2 = await fetch(url)
@@ -445,7 +356,7 @@ const buildResult = (text, direction, engine, casualText, formalText, isEn2Zh) =
 
 /**
  * Produce the casual + formal renderings for the given text + direction.
- * Tries: curated phrasebook (instant) → keyless cloud LLM (context-aware).
+ * Local-First: instant dictionary hit → otherwise keyless cloud LLM.
  * @param {{onStatus?: (s:string)=>void}} [opts] status callback for the UI
  * @returns {{source, direction, engine, versions: object[]}}
  */
@@ -454,13 +365,13 @@ export async function generateVariants(rawText, direction = 'en2zh', opts = {}) 
   const text = rawText.trim()
   const isEn2Zh = direction === 'en2zh'
 
-  // 1) Curated phrasebook fast-path (offline, instant).
-  const entry = isEn2Zh ? PHRASEBOOK[phrasebookKey(text)] : null
-  if (entry) {
-    return buildResult(text, direction, 'phrasebook', entry.us.zh, entry.formal.zh, isEn2Zh)
+  // ── Step 1: Local-First — instant, ZERO network ──
+  if (isEn2Zh) {
+    const hit = LOCAL_DICT[dictKey(text)]
+    if (hit) return buildResult(text, direction, 'local', hit.casual, hit.formal, isEn2Zh)
   }
 
-  // 2) Keyless cloud LLM, chunked for long input (chunks run in parallel).
+  // ── Step 2: Cloud LLM (only for uncached / custom text) ──
   onStatus?.('Translating…')
   const chunks = splitIntoChunks(text, MAX_CHUNK)
   const raws = await Promise.all(chunks.map((ch) => runLLM(userPrompt(ch, isEn2Zh))))

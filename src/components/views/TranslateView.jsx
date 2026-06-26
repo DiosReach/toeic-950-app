@@ -172,12 +172,12 @@ export default function TranslateView() {
               <div className="flex items-center gap-2">
                 <span
                   className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                    result.engine === 'phrasebook'
+                    result.engine === 'local'
                       ? 'bg-emerald-500/15 text-emerald-300'
                       : 'bg-indigo-500/15 text-indigo-300'
                   }`}
                 >
-                  {result.engine === 'phrasebook' ? '✦ instant' : '🤖 cloud AI'}
+                  {result.engine === 'local' ? '⚡ instant · local' : '🤖 cloud AI'}
                 </span>
                 <button
                   onClick={saveCurrent}
