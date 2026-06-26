@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useProgressContext } from '../../context/ProgressContext'
 import { useTranslations } from '../../hooks/useTranslations'
-import { generateVariants } from '../../lib/translate'
+import { generateVariants, VERSION_META } from '../../lib/translate'
 import { speak, speechSupported } from '../../lib/tts'
+
+const ORDER = ['casual', 'formal']
 
 export default function TranslateView() {
   const { uid } = useProgressContext()
@@ -13,6 +15,7 @@ export default function TranslateView() {
   const [input, setInput] = useState('')
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState('') // AI load/generation progress
   const [error, setError] = useState('')
 
   const isEn2Zh = direction === 'en2zh'
@@ -30,13 +33,24 @@ export default function TranslateView() {
     setBusy(true)
     setError('')
     setResult(null)
+    setStatus('Preparing on-device AI…')
     try {
-      const out = await generateVariants(text, direction)
+      const out = await generateVariants(text, direction, { onStatus: setStatus })
       setResult({ mode, ...out })
-    } catch {
-      setError('Translation service is unavailable right now. Please try again.')
+    } catch (err) {
+      const m = err?.message
+      if (m === 'NO_WEBGPU') {
+        setError(
+          'On-device AI needs a WebGPU browser (Chrome / Edge 113+ or Safari 17+). Please open the app there to translate.',
+        )
+      } else if (m === 'EMPTY_AI') {
+        setError('The AI returned an unexpected response. Please try again.')
+      } else {
+        setError('Translation engine error. Please try again.')
+      }
     } finally {
       setBusy(false)
+      setStatus('')
     }
   }
 
@@ -46,7 +60,7 @@ export default function TranslateView() {
       mode: result.mode,
       direction,
       source: result.source,
-      isCurated: result.isCurated,
+      engine: result.engine,
       versions: result.versions.map((v) => ({ key: v.key, result: v.result })),
     })
   }
@@ -56,7 +70,7 @@ export default function TranslateView() {
       <div>
         <h1 className="text-2xl font-extrabold">智慧雙模翻譯中心</h1>
         <p className="text-sm text-slate-400">
-          Two-register translation · 💬 口語化表達 / 💼 商業正式翻譯
+          On-device AI translation · 💬 口語化表達 / 💼 商業正式翻譯
         </p>
       </div>
 
@@ -123,11 +137,11 @@ export default function TranslateView() {
             placeholder={
               mode === 'word'
                 ? isEn2Zh
-                  ? 'e.g. schedule'
-                  : '例如：開會'
+                  ? 'e.g. prospect'
+                  : '例如：前景'
                 : isEn2Zh
-                  ? 'Paste any length of English — long paragraphs are auto-chunked…'
-                  : '貼上任意長度的中文段落，自動分段翻譯…'
+                  ? 'Type or paste English — translated on-device by AI…'
+                  : '輸入或貼上中文，由裝置端 AI 翻譯…'
             }
             rows={mode === 'word' ? 3 : 8}
             className="scrollbar-slim flex-1 resize-none rounded-xl border border-slate-700 bg-slate-950/60 p-3 text-slate-100 placeholder-slate-600 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
@@ -164,22 +178,35 @@ export default function TranslateView() {
               {targetLang} · 兩種版本
             </span>
             {result && (
-              <button
-                onClick={saveCurrent}
-                title="Save to history"
-                className="rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold text-amber-300 hover:bg-slate-700"
-              >
-                ★ Save
-              </button>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    result.engine === 'phrasebook'
+                      ? 'bg-emerald-500/15 text-emerald-300'
+                      : 'bg-indigo-500/15 text-indigo-300'
+                  }`}
+                >
+                  {result.engine === 'phrasebook' ? '✦ instant' : '🤖 on-device AI'}
+                </span>
+                <button
+                  onClick={saveCurrent}
+                  title="Save to history"
+                  className="rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold text-amber-300 hover:bg-slate-700"
+                >
+                  ★ Save
+                </button>
+              </div>
             )}
           </div>
 
           {error ? (
             <p className="rounded-xl bg-rose-500/10 p-4 text-sm text-rose-400">{error}</p>
           ) : busy ? (
-            <p className="animate-pulse rounded-xl bg-slate-950/40 p-4 text-sm text-slate-500">
-              Translating…
-            </p>
+            <div className="space-y-3">
+              {ORDER.map((key) => (
+                <LoadingCard key={key} meta={VERSION_META[key]} status={key === 'casual' ? status : ''} />
+              ))}
+            </div>
           ) : !result ? (
             <p className="rounded-xl bg-slate-950/40 p-4 text-sm text-slate-600">
               Two versions appear here — 💬 casual and 💼 formal — with the
@@ -214,7 +241,7 @@ export default function TranslateView() {
                     <div className="space-y-0.5">
                       {it.versions.map((v) => (
                         <p key={v.key} className="truncate text-sm font-semibold text-white">
-                          {VERSION_ICON[v.key]} {v.result}
+                          {VERSION_META[v.key]?.icon} {v.result}
                         </p>
                       ))}
                     </div>
@@ -239,8 +266,6 @@ export default function TranslateView() {
   )
 }
 
-const VERSION_ICON = { casual: '💬', formal: '💼' }
-
 function VersionCard({ v }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
@@ -262,6 +287,22 @@ function VersionCard({ v }) {
       <p className="text-2xl font-bold leading-snug text-white">{v.result}</p>
       {/* Reference: the original input — small + muted */}
       <p className="mt-1.5 text-xs text-slate-500">{v.source}</p>
+    </div>
+  )
+}
+
+// Skeleton card with a spinner shown while the AI loads / generates.
+function LoadingCard({ meta, status }) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="text-lg">{meta.icon}</span>
+        <p className="text-sm font-bold text-white">{meta.label}</p>
+      </div>
+      <div className="flex items-center gap-3">
+        <span className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-slate-700 border-t-indigo-400" />
+        <span className="text-sm text-slate-400">{status || 'Thinking…'}</span>
+      </div>
     </div>
   )
 }

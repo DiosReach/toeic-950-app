@@ -1,30 +1,30 @@
 // ─────────────────────────────────────────────────────────────
-// Two-register translation engine (keyless).
+// Two-register translation engine — keyless, on-device LLM.
 //
-// For any input we surface TWO renderings of the translated result:
-//   💬 casual  — natural, conversational Traditional Chinese (or casual EN)
-//   💼 formal  — polished business / TOEIC-grade Traditional Chinese (or EN)
+// MyMemory's translation-memory matching produced garbage (e.g. "further" ->
+// "臨床技能") so it's gone. We now run a small instruction-tuned model fully in
+// the browser via WebLLM (WebGPU) — no API key, no server. The model is
+// downloaded + cached on first use. Chrome's built-in Prompt API (window.ai /
+// LanguageModel) is used first when already available (instant, no download).
 //
-// Strategy (no LLM at runtime):
-//   1. A curated PHRASEBOOK gives authentic casual/formal output for common
-//      workplace terms (instant, zero network).
-//   2. Otherwise we fetch the base translation from MyMemory (auto-chunked to
-//      bypass the 500-char limit) and style it into the two registers.
+// For each input we ask the model for TWO distinct registers:
+//   💬 casual  — natural, white-collar / everyday Traditional Chinese (or EN)
+//   💼 formal  — strict corporate / TOEIC-grade Traditional Chinese (or EN)
 //
-// Each version exposes `result` (the translated text — the MAIN large font in
-// the UI) and `source` (the original input — the small reference line).
-// `generateVariants()` keeps a stable shape so an LLM can later replace step 2.
+// A curated PHRASEBOOK still answers common terms instantly (offline, no model).
+// Each version exposes `result` (translated text — MAIN large font) and
+// `source` (original input — small reference line).
 // ─────────────────────────────────────────────────────────────
 
-const MYMEMORY = 'https://api.mymemory.translated.net/get'
-const LANGPAIR = { en2zh: 'en|zh-TW', zh2en: 'zh-TW|en' }
-const MAX_CHUNK = 400 // stay safely under MyMemory's free 500-char limit
+const MAX_CHUNK = 500 // per-request character budget for the model
+
+// Small, multilingual, strong at Chinese — good for EN<->ZH translation.
+const MODEL_ID = 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC'
 
 export const VERSION_META = {
   casual: { icon: '💬', label: '口語化表達', sub: 'Modern Casual Expression' },
   formal: { icon: '💼', label: '商業正式翻譯', sub: 'Elite Business & TOEIC Formal' },
 }
-const ORDER = ['casual', 'formal']
 
 // ── Curated phrasebook: authentic, contemporary 3-version renderings ──
 const PHRASEBOOK = {
@@ -320,59 +320,10 @@ const PHRASEBOOK = {
   },
 }
 
-// ── English register transforms (used when the target is English) ──
-const casualizeEn = (s) =>
-  s
-    .replace(/\bcannot\b/gi, 'can’t')
-    .replace(/\bdo not\b/gi, 'don’t')
-    .replace(/\bwill not\b/gi, 'won’t')
-    .replace(/\bI am\b/g, 'I’m')
-    .replace(/\byou are\b/gi, 'you’re')
-    .replace(/\bit is\b/gi, 'it’s')
-    .replace(/\bwe are\b/gi, 'we’re')
-    .replace(/\bgentlemen\b/gi, 'folks')
-
-const formalizeEn = (s) =>
-  s
-    .replace(/\bcan’t\b/gi, 'cannot')
-    .replace(/\bdon’t\b/gi, 'do not')
-    .replace(/\bwon’t\b/gi, 'will not')
-    .replace(/\bI’m\b/g, 'I am')
-    .replace(/\bASAP\b/gi, 'at your earliest convenience')
-    .replace(/\bget\b/gi, 'obtain')
-    .replace(/\bok\b/gi, 'acceptable')
-    .replace(/\bhi\b/gi, 'Dear Sir or Madam')
-
-// ── Traditional Chinese register transforms (target is Chinese) ──
-// Heuristic, keyless styling so the casual vs formal outputs differ usefully.
-const ZH_FORMAL = [
-  [/你們/g, '各位'], [/你/g, '您'], [/不能/g, '無法'], [/不會/g, '不會'],
-  [/因為/g, '由於'], [/所以/g, '因此'], [/而且/g, '並且'], [/但是/g, '惟'],
-  [/馬上/g, '立即'], [/趕快/g, '盡速'], [/這個/g, '該'], [/這些/g, '該等'],
-  [/這/g, '此'], [/會議/g, '會議'], [/幫/g, '協助'], [/給/g, '提供'],
-  [/已經/g, '業已'], [/想要/g, '擬'], [/謝謝/g, '謹致謝忱'], [/請/g, '敬請'],
-]
-const ZH_CASUAL = [
-  [/各位/g, '大家'], [/您/g, '你'], [/無法/g, '不能'], [/由於/g, '因為'],
-  [/因此/g, '所以'], [/並且/g, '而且'], [/立即/g, '馬上'], [/盡速/g, '趕快'],
-  [/該等/g, '這些'], [/該/g, '這個'], [/此/g, '這'], [/業已/g, '已經'],
-  [/協助/g, '幫'], [/敬請/g, '請'], [/謹致謝忱/g, '謝啦'], [/之/g, '的'],
-]
-const applyMap = (s, map) => map.reduce((acc, [re, to]) => acc.replace(re, to), s)
-const formalizeZh = (s) => applyMap(s, ZH_FORMAL)
-const casualizeZh = (s) => applyMap(s, ZH_CASUAL)
-
 export const looksLikeWord = (text) => text.trim().split(/\s+/).length === 1
 
-async function mmTranslate(text, langpair) {
-  const url = `${MYMEMORY}?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(langpair)}`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error('translation failed')
-  const data = await res.json()
-  const out = data?.responseData?.translatedText
-  if (!out) throw new Error('empty translation')
-  return out
-}
+const phrasebookKey = (s) =>
+  s.trim().toLowerCase().replace(/[.!?,;:'"]/g, '').replace(/\s+/g, ' ')
 
 // Split long text into <MAX_CHUNK pieces on sentence boundaries (handles both
 // Latin .!? and CJK 。！？；plus newlines). Long single sentences are hard-wrapped.
@@ -405,63 +356,146 @@ export function splitIntoChunks(text, max = MAX_CHUNK) {
   return chunks.map((c) => c.trim()).filter(Boolean)
 }
 
-// Translate any length of text by chunking + merging (bypasses the 500 cap).
-async function translateLong(text, langpair) {
-  const chunks = splitIntoChunks(text)
-  if (chunks.length === 1) return mmTranslate(chunks[0], langpair)
-  const parts = await Promise.all(chunks.map((c) => mmTranslate(c, langpair)))
-  // English target needs spaces between sentences; Chinese keeps its own marks.
-  const sep = langpair.split('|')[1].startsWith('en') ? ' ' : ''
-  return parts.join(sep).replace(/\s{2,}/g, ' ').trim()
+// ── On-device LLM engine ─────────────────────────────────────
+const webgpuAvailable = () => typeof navigator !== 'undefined' && 'gpu' in navigator
+
+let enginePromise = null
+// Lazily download + initialize the WebLLM engine (singleton, cached by browser).
+function getEngine(onStatus) {
+  if (!enginePromise) {
+    enginePromise = (async () => {
+      const webllm = await import('@mlc-ai/web-llm')
+      return webllm.CreateMLCEngine(MODEL_ID, {
+        initProgressCallback: (r) =>
+          onStatus?.(r.text || `Loading on-device AI… ${Math.round((r.progress || 0) * 100)}%`),
+      })
+    })().catch((err) => {
+      enginePromise = null // allow a later retry after a failed download
+      throw err
+    })
+  }
+  return enginePromise
 }
 
-const phrasebookKey = (s) =>
-  s.trim().toLowerCase().replace(/[.!?,;:'"]/g, '').replace(/\s+/g, ' ')
+// Chrome's built-in Prompt API — used only when a model is ALREADY available
+// (so we never silently trigger a multi-GB background download here).
+async function tryBuiltIn(system, user) {
+  try {
+    const LM =
+      typeof window !== 'undefined' &&
+      (window.LanguageModel || window.ai?.languageModel || window.ai?.assistant)
+    if (!LM || !LM.create) return null
+    if (LM.availability) {
+      const a = await LM.availability().catch(() => null)
+      if (a !== 'available' && a !== 'readily') return null
+    }
+    const session = await LM.create({ systemPrompt: system })
+    const out = await session.prompt(user)
+    session.destroy?.()
+    return out
+  } catch {
+    return null
+  }
+}
+
+const SYSTEM_PROMPT = `You are a precise translation engine for a TOEIC business-English study app.
+Translate between English and Traditional Chinese with ZERO hallucination — never invent unrelated meanings (e.g. "further" must NEVER become "臨床技能").
+Reply with ONLY a compact JSON object and nothing else: {"casual":"...","formal":"..."}
+- "casual": natural, modern, white-collar everyday phrasing.
+- "formal": strict, elite corporate / official / TOEIC-grade phrasing.
+The two MUST differ meaningfully in register; never return them identical.`
+
+const userPrompt = (text, isEn2Zh) =>
+  isEn2Zh
+    ? `Translate this English into Traditional Chinese (casual + formal).
+Example: "prospect" -> {"casual":"未來的機會 / 盼頭","formal":"前景 / 展望 / 潛在客戶"}
+Text: """${text}"""`
+    : `Translate this Traditional Chinese into English (casual + formal).
+Example: "前景" -> {"casual":"what's ahead / the outlook","formal":"prospects / future outlook"}
+Text: """${text}"""`
+
+// Robustly pull {casual, formal} out of a model reply.
+function extractJson(raw) {
+  if (!raw) return null
+  let s = String(raw).replace(/```json|```/gi, '').trim()
+  const a = s.indexOf('{')
+  const b = s.lastIndexOf('}')
+  if (a >= 0 && b > a) s = s.slice(a, b + 1)
+  try {
+    const obj = JSON.parse(s)
+    if (obj && (obj.casual || obj.formal)) return obj
+  } catch {
+    /* fall through to loose parsing */
+  }
+  const c = s.match(/"casual"\s*:\s*"([^"]*)"/)
+  const f = s.match(/"formal"\s*:\s*"([^"]*)"/)
+  if (c || f) return { casual: c?.[1] || '', formal: f?.[1] || '' }
+  return null
+}
+
+async function runLLM(user, onStatus) {
+  // 1) Chrome built-in (instant when present).
+  const builtin = await tryBuiltIn(SYSTEM_PROMPT, user)
+  if (builtin) return builtin
+  // 2) WebLLM (WebGPU, downloads model on first use).
+  if (!webgpuAvailable()) throw new Error('NO_WEBGPU')
+  const engine = await getEngine(onStatus)
+  onStatus?.('Generating translation…')
+  const reply = await engine.chat.completions.create({
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: user },
+    ],
+    temperature: 0.2,
+    max_tokens: 400,
+  })
+  return reply?.choices?.[0]?.message?.content || ''
+}
+
+const buildResult = (text, direction, engine, casualText, formalText, isEn2Zh) => {
+  const build = (key, r) => ({
+    key,
+    ...VERSION_META[key],
+    result: r, // translated text — MAIN large font
+    source: text, // original input — small reference line
+    audioText: isEn2Zh ? text : r, // 🔊 always reads the English side
+  })
+  return { source: text, direction, engine, versions: [build('casual', casualText), build('formal', formalText)] }
+}
 
 /**
  * Produce the casual + formal renderings for the given text + direction.
- * @returns {{source, direction, isCurated, versions: object[]}}
- *   each version: { key, icon, label, sub, result, source, audioText }
+ * Tries: curated phrasebook (instant) → on-device LLM (context-aware).
+ * @param {{onStatus?: (s:string)=>void}} [opts] progress callback for the UI
+ * @returns {{source, direction, engine, versions: object[]}}
  */
-export async function generateVariants(rawText, direction = 'en2zh') {
+export async function generateVariants(rawText, direction = 'en2zh', opts = {}) {
+  const { onStatus } = opts
   const text = rawText.trim()
   const isEn2Zh = direction === 'en2zh'
 
-  // Base translation of the whole text (auto-chunked for long input).
-  const base = await translateLong(text, isEn2Zh ? LANGPAIR.en2zh : LANGPAIR.zh2en)
-
-  // Curated phrasebook is keyed by the English form.
-  const englishKey = isEn2Zh ? text : base
-  const entry = PHRASEBOOK[phrasebookKey(englishKey)]
-
-  let casualText
-  let formalText
-  let isCurated = false
+  // 1) Curated phrasebook fast-path (offline, instant, no model needed).
+  const entry = isEn2Zh ? PHRASEBOOK[phrasebookKey(text)] : null
   if (entry) {
-    isCurated = true
-    casualText = isEn2Zh ? entry.us.zh : entry.us.en
-    formalText = isEn2Zh ? entry.formal.zh : entry.formal.en
-  } else if (isEn2Zh) {
-    casualText = casualizeZh(base)
-    formalText = formalizeZh(base)
-  } else {
-    casualText = casualizeEn(base)
-    formalText = formalizeEn(base)
+    return buildResult(text, direction, 'phrasebook', entry.us.zh, entry.formal.zh, isEn2Zh)
   }
 
-  const build = (key, result) => ({
-    key,
-    ...VERSION_META[key],
-    result, // translated text — MAIN large font
-    source: text, // original input — small reference line
-    // 🔊 reads the English side: the input (en2zh) or this result (zh2en).
-    audioText: isEn2Zh ? text : result,
-  })
-
-  return {
-    source: text,
-    direction,
-    isCurated,
-    versions: [build('casual', casualText), build('formal', formalText)],
+  // 2) On-device LLM, chunked for long input.
+  const chunks = splitIntoChunks(text, MAX_CHUNK)
+  const casuals = []
+  const formals = []
+  for (const ch of chunks) {
+    const raw = await runLLM(userPrompt(ch, isEn2Zh), onStatus)
+    const obj = extractJson(raw) || {}
+    casuals.push((obj.casual || '').trim())
+    formals.push((obj.formal || '').trim())
   }
+  const sep = isEn2Zh ? '' : ' '
+  let casualText = casuals.join(sep).trim()
+  let formalText = formals.join(sep).trim()
+  if (!casualText && !formalText) throw new Error('EMPTY_AI')
+  if (!casualText) casualText = formalText
+  if (!formalText) formalText = casualText
+
+  return buildResult(text, direction, 'ai', casualText, formalText, isEn2Zh)
 }
